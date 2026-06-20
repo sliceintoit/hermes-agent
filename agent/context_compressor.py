@@ -659,6 +659,21 @@ class ContextCompressor(ContextEngine):
         """
         self._previous_summary = None
 
+    @staticmethod
+    def _coerce_max_tokens(value: Any) -> int | None:
+        """Normalize a max_tokens value to a positive int or None.
+
+        Only a positive integer is a real output reservation. None (provider
+        default), non-numeric values, or <= 0 all mean "no reservation".
+        """
+        if value is None:
+            return None
+        try:
+            ivalue = int(value)
+        except (TypeError, ValueError):
+            return None
+        return ivalue if ivalue > 0 else None
+
     def update_model(
         self,
         model: str,
@@ -667,6 +682,7 @@ class ContextCompressor(ContextEngine):
         api_key: Any = "",
         provider: str = "",
         api_mode: str = "",
+        max_tokens: int | None = None,
     ) -> None:
         """Update model info after a model switch or fallback activation."""
         self.model = model
@@ -675,10 +691,19 @@ class ContextCompressor(ContextEngine):
         self.provider = provider
         self.api_mode = api_mode
         self.context_length = context_length
+        if max_tokens is not None:
+            self.max_tokens = self._coerce_max_tokens(max_tokens)
+        effective_window = context_length - (self.max_tokens or 0)
+        if effective_window <= 0:
+            effective_window = context_length
         self.threshold_tokens = max(
-            int(context_length * self.threshold_percent),
+            int(effective_window * self.threshold_percent),
             MINIMUM_CONTEXT_LENGTH,
         )
+        if effective_window > 0 and self.threshold_tokens >= effective_window:
+            self.threshold_tokens = max(
+                1, min(int(effective_window * 0.85), effective_window - 1)
+            )
         # Recalculate token budgets for the new context length so the
         # compressor stays calibrated after a model switch (e.g. 200K → 32K).
         target_tokens = int(self.threshold_tokens * self.summary_target_ratio)
@@ -702,6 +727,7 @@ class ContextCompressor(ContextEngine):
         provider: str = "",
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
+        max_tokens: int | None = None,
     ):
         self.model = model
         self.base_url = base_url
@@ -718,6 +744,10 @@ class ContextCompressor(ContextEngine):
         # When False (default = historical behavior), insert a
         # deterministic "summary unavailable" handoff and drop the middle window.
         self.abort_on_summary_failure = abort_on_summary_failure
+        # Output-token reservation: the provider carves max_tokens out of the
+        # context window, so the usable input budget is context_length -
+        # max_tokens. None = provider default => assume no reservation. (#43547)
+        self.max_tokens = self._coerce_max_tokens(max_tokens)
 
         self.context_length = get_model_context_length(
             model, base_url=base_url, api_key=api_key,
@@ -728,10 +758,20 @@ class ContextCompressor(ContextEngine):
         # the percentage would suggest a lower value.  This prevents premature
         # compression on large-context models at 50% while keeping the % sane
         # for models right at the minimum.
+        effective_window = self.context_length - (self.max_tokens or 0)
+        if effective_window <= 0:
+            effective_window = self.context_length
         self.threshold_tokens = max(
-            int(self.context_length * threshold_percent),
+            int(effective_window * threshold_percent),
             MINIMUM_CONTEXT_LENGTH,
         )
+        # If flooring pushed the threshold to/over the effective window it can
+        # never be reached. Trigger at 85% of the effective input budget so a
+        # minimum-context model rides most of its budget before compacting.
+        if effective_window > 0 and self.threshold_tokens >= effective_window:
+            self.threshold_tokens = max(
+                1, min(int(effective_window * 0.85), effective_window - 1)
+            )
         self.compression_count = 0
 
         # Derive token budgets: ratio is relative to the threshold, not total context
@@ -744,9 +784,10 @@ class ContextCompressor(ContextEngine):
         if not quiet_mode:
             logger.info(
                 "Context compressor initialized: model=%s context_length=%d "
-                "threshold=%d (%.0f%%) target_ratio=%.0f%% tail_budget=%d "
+                "threshold=%d max_tokens=%s (%.0f%%) target_ratio=%.0f%% tail_budget=%d "
                 "provider=%s base_url=%s",
                 model, self.context_length, self.threshold_tokens,
+                self.max_tokens or "default",
                 threshold_percent * 100, self.summary_target_ratio * 100,
                 self.tail_token_budget,
                 provider or "none", base_url or "none",

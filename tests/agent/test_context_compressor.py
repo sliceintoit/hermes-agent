@@ -256,6 +256,36 @@ class TestGenerateSummaryNoneContent:
 class TestNonStringContent:
     """Regression: content as dict (e.g., llama.cpp tool calls) must not crash."""
 
+    def test_threshold_respects_max_tokens_reservation(self):
+        """Large max_tokens reduces the effective input budget."""
+        with patch("agent.context_compressor.get_model_context_length", return_value=200000):
+            cc = ContextCompressor("test-model", max_tokens=65536)
+        # effective_window = 200000 - 65536 = 134464
+        # threshold = max(134464 * 0.5, 64000) = 67232
+        assert cc.threshold_tokens == 67232
+
+    def test_threshold_without_max_tokens_uses_full_window(self):
+        """None max_tokens keeps full-window behavior."""
+        with patch("agent.context_compressor.get_model_context_length", return_value=128000):
+            cc = ContextCompressor("test-model", max_tokens=None)
+        assert cc.threshold_tokens == max(int(128000 * 0.5), 64000)
+
+    def test_small_window_with_max_tokens_clamps_to_85pct(self):
+        """When floor meets effective window, trigger at 85%."""
+        with patch("agent.context_compressor.get_model_context_length", return_value=64000):
+            cc = ContextCompressor("test-model", max_tokens=32000)
+        # effective_window = 32000
+        # raw threshold = max(32000 * 0.5, 64000) = 64000
+        # 64000 >= 32000 → clamp to 85% of 32000 = 27200
+        assert cc.threshold_tokens == 27200
+
+    def test_coerce_max_tokens_rejects_non_numeric(self):
+        assert ContextCompressor._coerce_max_tokens("abc") is None
+        assert ContextCompressor._coerce_max_tokens(-5) is None
+        assert ContextCompressor._coerce_max_tokens(0) is None
+        assert ContextCompressor._coerce_max_tokens(100) == 100
+        assert ContextCompressor._coerce_max_tokens(None) is None
+
     def test_dict_content_coerced_to_string(self):
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
