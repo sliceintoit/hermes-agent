@@ -8,6 +8,33 @@ from types import SimpleNamespace
 from gateway import status
 
 
+class TestGatewayCommandLineMatcher:
+    def test_accepts_profile_flag_after_gateway(self):
+        assert status.looks_like_gateway_command_line(
+            "hermes gateway --profile work run"
+        ) is True
+
+    def test_accepts_profile_flag_before_run(self):
+        assert status.looks_like_gateway_command_line(
+            "python -m hermes_cli.main gateway -p work run"
+        ) is True
+
+    def test_accepts_profile_named_gateway(self):
+        assert status.looks_like_gateway_command_line(
+            "hermes -p gateway gateway run"
+        ) is True
+
+    def test_accepts_quoted_windows_gateway_entrypoint(self):
+        assert status.looks_like_gateway_command_line(
+            '"C:\\Program Files\\Hermes\\hermes-gateway.exe"'
+        ) is True
+
+    def test_rejects_non_run_gateway_subcommand(self):
+        assert status.looks_like_gateway_command_line(
+            "python -m hermes_cli.main gateway status"
+        ) is False
+
+
 class TestGatewayPidState:
     def test_write_pid_file_records_gateway_metadata(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))

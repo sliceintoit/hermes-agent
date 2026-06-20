@@ -14,6 +14,7 @@ concurrently under distinct configurations).
 import hashlib
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -189,20 +190,77 @@ def _read_process_cmdline(pid: int) -> Optional[str]:
     return None
 
 
+def looks_like_gateway_command_line(command: str | None) -> bool:
+    """Return True only for a real ``gateway run`` process command line.
+
+    Lifecycle decisions (is the gateway up? did restart relaunch it?) must not
+    fire on loose substring matches. This requires the actual ``gateway``
+    subcommand followed by ``run`` (or one of the gateway-dedicated
+    entrypoints), excluding the other ``gateway`` management subcommands and
+    any process that merely contains the word "gateway".
+
+    Tokenizes quote-aware (``shlex``) so quoted Windows paths with spaces
+    survive, and strips ``--profile``/``-p`` selectors from anywhere in argv —
+    Hermes removes them before argparse, so the profile flag (and a profile
+    literally named ``gateway``) can legally appear on either side of the
+    ``gateway`` subcommand.
+    """
+    if not command:
+        return False
+
+    try:
+        raw_tokens = shlex.split(command, posix=False)
+    except ValueError:
+        raw_tokens = command.split()
+
+    tokens = [t.strip("\"'").replace("\\", "/").lower() for t in raw_tokens]
+    if not tokens:
+        return False
+
+    for token in tokens:
+        if token == "gateway/run.py" or token.endswith("/gateway/run.py"):
+            return True
+        basename = token.rsplit("/", 1)[-1]
+        if basename in ("hermes-gateway", "hermes-gateway.exe"):
+            return True
+
+    joined = " ".join(tokens)
+    has_gateway_entry = (
+        "hermes_cli.main" in joined
+        or "hermes_cli/main.py" in joined
+        or any(t.rsplit("/", 1)[-1] in ("hermes", "hermes.exe") for t in tokens)
+    )
+    if not has_gateway_entry:
+        return False
+
+    filtered: list[str] = []
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in ("--profile", "-p"):
+            skip_next = True
+            continue
+        if token.startswith("--profile=") or token.startswith("-p="):
+            continue
+        filtered.append(token)
+
+    for i, token in enumerate(filtered):
+        if token != "gateway":
+            continue
+        if i + 1 >= len(filtered):
+            return True
+        return filtered[i + 1] == "run"
+    return False
+
+
 def _looks_like_gateway_process(pid: int) -> bool:
     """Return True when the live PID still looks like the Hermes gateway."""
     cmdline = _read_process_cmdline(pid)
     if not cmdline:
         return False
-
-    patterns = (
-        "hermes_cli.main gateway",
-        "hermes_cli/main.py gateway",
-        "hermes gateway",
-        "hermes-gateway",
-        "gateway/run.py",
-    )
-    return any(pattern in cmdline for pattern in patterns)
+    return looks_like_gateway_command_line(cmdline)
 
 
 def _record_looks_like_gateway(record: dict[str, Any]) -> bool:
@@ -214,15 +272,8 @@ def _record_looks_like_gateway(record: dict[str, Any]) -> bool:
     if not isinstance(argv, list) or not argv:
         return False
 
-    # Normalize Windows backslashes so patterns match cross-platform.
-    cmdline = " ".join(str(part) for part in argv).replace("\\", "/")
-    patterns = (
-        "hermes_cli.main gateway",
-        "hermes_cli/main.py gateway",
-        "hermes gateway",
-        "gateway/run.py",
-    )
-    return any(pattern in cmdline for pattern in patterns)
+    cmdline = " ".join(str(part) for part in argv)
+    return looks_like_gateway_command_line(cmdline)
 
 
 def _build_pid_record() -> dict:
