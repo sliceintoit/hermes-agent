@@ -53,6 +53,8 @@ import {
   $freshDraftReady,
   $gatewayState,
   $messagingSessions,
+  $resumeFailedSessionId,
+  $resumeExhaustedSessionId,
   $selectedStoredSessionId,
   $sessions,
   $workingSessionIds,
@@ -199,6 +201,8 @@ export function DesktopController() {
   const activeSessionId = useStore($activeSessionId)
   const currentCwd = useStore($currentCwd)
   const freshDraftReady = useStore($freshDraftReady)
+  const resumeFailedSessionId = useStore($resumeFailedSessionId)
+  const resumeExhaustedSessionId = useStore($resumeExhaustedSessionId)
   const filePreviewTarget = useStore($filePreviewTarget)
   const previewTarget = useStore($previewTarget)
   const selectedStoredSessionId = useStore($selectedStoredSessionId)
@@ -845,6 +849,8 @@ export function DesktopController() {
     gatewayState,
     locationPathname: location.pathname,
     resumeSession,
+    resumeFailedSessionId,
+    resumeExhaustedSessionId,
     routedSessionId,
     runtimeIdByStoredSessionIdRef,
     selectedStoredSessionId,
@@ -1002,6 +1008,7 @@ export function DesktopController() {
       onReload={reloadFromMessage}
       onRemoveAttachment={id => void composer.removeAttachment(id)}
       onRestoreToMessage={restoreToMessage}
+      onRetryResume={sessionId => void resumeSession(sessionId, true)}
       onSteer={steerPrompt}
       onSubmit={submitText}
       onThreadMessagesChange={handleThreadMessagesChange}
