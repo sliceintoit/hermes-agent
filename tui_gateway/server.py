@@ -8068,6 +8068,7 @@ _TUI_EXTRA: list[tuple[str, str, str]] = [
 # so slash.exec rejects them → TUI falls through to command.dispatch.
 _PENDING_INPUT_COMMANDS: frozenset[str] = frozenset(
     {
+        "learn",
         "retry",
         "queue",
         "q",

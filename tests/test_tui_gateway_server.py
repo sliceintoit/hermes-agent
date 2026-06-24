@@ -4030,6 +4030,33 @@ def test_snapshot_restore_is_blocked_from_tui_worker():
     )
 
 
+def test_learn_routes_through_command_dispatch_not_slash_worker():
+    server._sessions["sid"] = _session()
+    try:
+        worker_resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "slash.exec",
+                "params": {"command": "learn ./docs", "session_id": "sid"},
+            }
+        )
+        dispatch_resp = server.handle_request(
+            {
+                "id": "2",
+                "method": "command.dispatch",
+                "params": {"arg": "./docs", "name": "learn", "session_id": "sid"},
+            }
+        )
+    finally:
+        server._sessions.pop("sid", None)
+
+    assert worker_resp["error"]["code"] == 4018
+    assert "pending-input command: use command.dispatch for /learn" in worker_resp["error"]["message"]
+    assert dispatch_resp["result"]["type"] == "send"
+    assert "./docs" in dispatch_resp["result"]["message"]
+    assert "[/learn]" in dispatch_resp["result"]["message"]
+
+
 def test_command_dispatch_exec_nonzero_surfaces_error(monkeypatch):
     monkeypatch.setattr(
         server,
