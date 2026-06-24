@@ -44,12 +44,17 @@ describe('desktop slash command curation', () => {
     expect(isDesktopSlashSuggestion('/tools')).toBe(true)
     expect(isDesktopSlashSuggestion('/save')).toBe(true)
     expect(isDesktopSlashSuggestion('/personality')).toBe(true)
+    expect(isDesktopSlashSuggestion('/learn')).toBe(true)
     expect(isDesktopSlashCommand('/tools')).toBe(true)
     expect(isDesktopSlashCommand('/save')).toBe(true)
     expect(isDesktopSlashCommand('/personality')).toBe(true)
+    expect(isDesktopSlashCommand('/learn')).toBe(true)
     expect(desktopSlashUnavailableMessage('/tools')).toBeNull()
     expect(desktopSlashUnavailableMessage('/save')).toBeNull()
     expect(desktopSlashUnavailableMessage('/personality')).toBeNull()
+    expect(desktopSlashUnavailableMessage('/learn')).toBeNull()
+    expect(resolveDesktopCommand('/learn')?.surface).toEqual({ kind: 'exec' })
+    expect(resolveDesktopCommand('/learn')?.args).toBe(true)
   })
 
   it('allows aliases to execute without cluttering the popover', () => {
