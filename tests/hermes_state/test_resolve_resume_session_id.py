@@ -114,7 +114,15 @@ def test_compression_tip_not_confused_with_delegation_child(db):
     base = int(time.time()) - 10_000
     db.create_session("conv", source="cli")
     db.append_message("conv", role="user", content="parent turn")
-    db.create_session("subagent", source="cli", parent_session_id="conv")
+    # Real delegate/subagent sessions carry the `_delegate_from` marker
+    # (set in delegate_tool.py) — that marker, not timing, is what
+    # distinguishes them from a compression continuation.
+    db.create_session(
+        "subagent",
+        source="subagent",
+        parent_session_id="conv",
+        model_config={"_delegate_from": "conv"},
+    )
     db.append_message("subagent", role="assistant", content="delegated work")
     db._conn.execute("UPDATE sessions SET started_at = ? WHERE id = 'conv'", (base,))
     db._conn.execute("UPDATE sessions SET started_at = ? WHERE id = 'subagent'", (base + 100,))
