@@ -53,6 +53,7 @@ import {
 } from '@/store/composer-queue'
 import { $statusItemsBySession } from '@/store/composer-status'
 import { notify } from '@/store/notifications'
+import { $activeSessionAwaitingInput } from '@/store/prompts'
 import { $gatewayState, $messages, setSessionPickerOpen } from '@/store/session'
 import { $threadScrolledUp } from '@/store/thread-scroll'
 import { useTheme } from '@/themes'
@@ -185,6 +186,10 @@ export function ChatBar({
   const queuedPromptsBySession = useStore($queuedPromptsBySession)
   const statusItemsBySession = useStore($statusItemsBySession)
   const scrolledUp = useStore($threadScrolledUp)
+  // The turn is parked on the user (clarify / approval / sudo / secret). Esc must
+  // not interrupt it — stopping would discard a question the user may want to
+  // come back to.
+  const awaitingInput = useStore($activeSessionAwaitingInput)
   const activeQueueSessionKey = queueSessionKey || sessionId || null
 
   const queuedPrompts = useMemo(
@@ -1048,8 +1053,10 @@ export function ChatBar({
         return
       }
 
-      // Otherwise Esc interrupts the running turn (Stop-button parity).
-      if (busy) {
+      // Otherwise Esc interrupts the running turn (Stop-button parity) — unless
+      // the turn is parked waiting on the user, where Esc must not discard the
+      // pending prompt.
+      if (busy && !awaitingInput) {
         event.preventDefault()
         triggerHaptic('cancel')
         void Promise.resolve(onCancel())

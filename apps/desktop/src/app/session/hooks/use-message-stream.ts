@@ -26,7 +26,7 @@ import {
 import { triggerHaptic } from '@/lib/haptics'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
 import { parseTodos } from '@/lib/todos'
-import { setClarifyRequest } from '@/store/clarify'
+import { clearClarifyRequest, setClarifyRequest } from '@/store/clarify'
 import { setSessionCompacting } from '@/store/compaction'
 import { refreshBackgroundProcesses } from '@/store/composer-status'
 import { $gateway } from '@/store/gateway'
@@ -883,6 +883,7 @@ export function useMessageStream({
         // session so a background turn finishing can't wipe the active chat's
         // prompt, and vice versa.
         clearAllPrompts(sessionId)
+        clearClarifyRequest(undefined, sessionId)
         setSessionCompacting(sessionId, false)
 
         flushQueuedDeltas(sessionId)
@@ -1089,6 +1090,7 @@ export function useMessageStream({
         // the failed turn (same intent as the message.complete clear).
         if (sessionId) {
           clearAllPrompts(sessionId)
+          clearClarifyRequest(undefined, sessionId)
           setSessionCompacting(sessionId, false)
           compactedTurnRef.current.delete(sessionId)
         }
