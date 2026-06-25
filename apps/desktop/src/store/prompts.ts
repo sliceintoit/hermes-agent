@@ -1,5 +1,6 @@
 import { atom, computed, type ReadableAtom } from 'nanostores'
 
+import { $clarifyRequest } from './clarify'
 import { $activeSessionId } from './session'
 
 // Blocking interactive prompts the gateway raises mid-turn. Each maps to a
@@ -99,6 +100,15 @@ export const clearSudoRequest = sudo.clear
 export const $secretRequest = secret.$active
 export const setSecretRequest = secret.set
 export const clearSecretRequest = secret.clear
+
+// True when the active session is blocked on the user (clarify question or an
+// approval / sudo / secret prompt). Mirrors the pet's `awaitingInput` concept:
+// the turn is paused on you, not working — so callers can suppress "thinking"
+// indicators and the Esc-to-interrupt shortcut while you decide.
+export const $activeSessionAwaitingInput = computed(
+  [$clarifyRequest, $approvalRequest, $sudoRequest, $secretRequest],
+  (clarify, approval, sudo, secret) => Boolean(clarify || approval || sudo || secret)
+)
 
 // Drop in-flight prompts for `sessionId` (a turn ended) across all three kinds —
 // or every parked prompt when no session is given (global reset / tests).

@@ -93,6 +93,7 @@ import { cn } from '@/lib/utils'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
 import type { ComposerAttachment } from '@/store/composer'
 import { notifyError } from '@/store/notifications'
+import { $activeSessionAwaitingInput } from '@/store/prompts'
 import { $connection } from '@/store/session'
 import { $voicePlayback } from '@/store/voice-playback'
 
@@ -313,6 +314,10 @@ const STREAM_STALL_S = 2
 // dither + a timer counting from the last activity.
 const StreamStallIndicator: FC<{ activity: string }> = ({ activity }) => {
   const [stalled, setStalled] = useState(false)
+  // A pending clarify / approval / sudo / secret means the turn is paused on the
+  // user, not working — so don't resurrect the "thinking" timer while they
+  // decide.
+  const awaitingInput = useStore($activeSessionAwaitingInput)
 
   useEffect(() => {
     setStalled(false)
@@ -321,9 +326,10 @@ const StreamStallIndicator: FC<{ activity: string }> = ({ activity }) => {
     return () => window.clearTimeout(id)
   }, [activity])
 
-  const elapsed = useElapsedSeconds(stalled)
+  const active = stalled && !awaitingInput
+  const elapsed = useElapsedSeconds(active)
 
-  if (!stalled) {
+  if (!active) {
     return null
   }
 

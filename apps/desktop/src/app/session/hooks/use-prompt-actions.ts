@@ -27,6 +27,7 @@ import { triggerHaptic } from '@/lib/haptics'
 import { setMutableRef } from '@/lib/mutable-ref'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
 import { setSessionYolo } from '@/lib/yolo-session'
+import { clearClarifyRequest } from '@/store/clarify'
 import {
   $composerAttachments,
   clearComposerAttachments,
@@ -39,6 +40,7 @@ import { resetSessionBackground } from '@/store/composer-status'
 import { clearNotifications, notify, notifyError } from '@/store/notifications'
 import { requestDesktopOnboarding } from '@/store/onboarding'
 import { $activeGatewayProfile, $newChatProfile, ensureGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { clearAllPrompts } from '@/store/prompts'
 import {
   $busy,
   $connection,
@@ -1288,6 +1290,7 @@ export function usePromptActions({
         awaitingResponse: false,
         streamId: null,
         pendingBranchGroup: null,
+        needsInput: false,
         interrupted: true
       }
     })
@@ -1295,6 +1298,12 @@ export function usePromptActions({
     clearSessionTodos(sessionId)
     clearSessionSubagents(sessionId)
     resetSessionBackground(sessionId)
+    // Stop ends the turn, so the gateway is no longer blocked on any prompt it
+    // raised. Drop this session's pending clarify / approval / sudo / secret so
+    // a dead panel (and the sidebar "needs input" dot) can't linger and accept
+    // an answer the backend will reject.
+    clearAllPrompts(sessionId)
+    clearClarifyRequest(undefined, sessionId)
 
     try {
       await requestGateway('session.interrupt', { session_id: sessionId })
