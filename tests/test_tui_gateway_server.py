@@ -1000,7 +1000,11 @@ def test_session_resume_follows_compression_tip(monkeypatch, tmp_path):
 
     try:
         resp = server.handle_request(
-            {"id": "1", "method": "session.resume", "params": {"session_id": "parent_root"}}
+            {
+                "id": "1",
+                "method": "session.resume",
+                "params": {"session_id": "parent_root", "eager_build": True},
+            }
         )
     finally:
         db.close()
