@@ -146,6 +146,38 @@ class TestBuildCallKwargsMaxTokens:
         assert "max_completion_tokens" not in kwargs
 
 
+class TestAuxiliaryOpenAIRetryBudget:
+    def test_sync_openai_aux_client_disables_sdk_retries_by_default(self):
+        import agent.auxiliary_client as aux
+
+        with patch("agent.auxiliary_client.OpenAI", return_value="client") as openai_cls:
+            assert aux._create_openai_client(api_key="k", base_url="https://example.com/v1") == "client"
+
+        assert openai_cls.call_args.kwargs["max_retries"] == 0
+
+    def test_sync_openai_aux_client_respects_explicit_retry_override(self):
+        import agent.auxiliary_client as aux
+
+        with patch("agent.auxiliary_client.OpenAI", return_value="client") as openai_cls:
+            aux._create_openai_client(
+                api_key="k",
+                base_url="https://example.com/v1",
+                max_retries=4,
+            )
+
+        assert openai_cls.call_args.kwargs["max_retries"] == 4
+
+    def test_async_openai_aux_client_disables_sdk_retries_by_default(self):
+        import agent.auxiliary_client as aux
+
+        sync_client = SimpleNamespace(api_key="k", base_url="https://example.com/v1")
+        with patch("openai.AsyncOpenAI", return_value="async-client") as async_openai_cls:
+            client, model = aux._to_async_client(sync_client, "model-x")
+
+        assert (client, model) == ("async-client", "model-x")
+        assert async_openai_cls.call_args.kwargs["max_retries"] == 0
+
+
 class TestNousTagsScoping:
     def test_tags_injected_when_provider_is_nous(self, monkeypatch):
         import agent.auxiliary_client as aux
@@ -2041,6 +2073,64 @@ class TestTransientTransportRetry:
         # Primary tried twice (initial + same-target retry), then fallback.
         assert primary.chat.completions.create.call_count == 2
         assert fb_client.chat.completions.create.call_count == 1
+
+    def test_compression_timeout_skips_same_provider_retry_and_falls_back(self):
+        primary = MagicMock()
+        primary.base_url = "https://openrouter.ai/api/v1"
+        primary.chat.completions.create.side_effect = TimeoutError("Request timed out")
+
+        fb_client = MagicMock()
+        fb_client.base_url = "https://api.openai.com/v1"
+        fb_client.chat.completions.create.return_value = {"fallback": True}
+
+        p1, p2, p3 = self._patches(primary)
+        with (
+            p1, p2, p3,
+            patch(
+                "agent.auxiliary_client._try_configured_fallback_chain",
+                return_value=(None, None, ""),
+            ),
+            patch(
+                "agent.auxiliary_client._try_main_agent_model_fallback",
+                return_value=(fb_client, "fb-model", "openai"),
+            ),
+        ):
+            result = call_llm(task="compression", messages=[{"role": "user", "content": "hi"}])
+
+        assert result == {"fallback": True}
+        # Full compression timeouts are already expensive; skip the same-target
+        # retry and let the fallback chain run immediately.
+        assert primary.chat.completions.create.call_count == 1
+        assert fb_client.chat.completions.create.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_async_compression_timeout_skips_same_provider_retry_and_falls_back(self):
+        primary = MagicMock()
+        primary.base_url = "https://openrouter.ai/api/v1"
+        primary.chat.completions.create = AsyncMock(side_effect=TimeoutError("Request timed out"))
+
+        fb_client = MagicMock()
+        fb_client.base_url = "https://api.openai.com/v1"
+        fb_client.chat.completions.create = AsyncMock(return_value={"fallback": True})
+
+        p1, p2, p3 = self._patches(primary)
+        with (
+            p1, p2, p3,
+            patch(
+                "agent.auxiliary_client._try_configured_fallback_chain",
+                return_value=(None, None, ""),
+            ),
+            patch(
+                "agent.auxiliary_client._try_main_agent_model_fallback",
+                return_value=(fb_client, "fb-model", "openai"),
+            ),
+            patch("agent.auxiliary_client._to_async_client", return_value=(fb_client, "fb-model")),
+        ):
+            result = await async_call_llm(task="compression", messages=[{"role": "user", "content": "hi"}])
+
+        assert result == {"fallback": True}
+        assert primary.chat.completions.create.await_count == 1
+        assert fb_client.chat.completions.create.await_count == 1
 
 
 class TestIsConnectionError:
