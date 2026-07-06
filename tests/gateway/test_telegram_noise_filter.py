@@ -1,10 +1,15 @@
 """Telegram-specific gateway filtering for noisy status/error output."""
 
+import pytest
+
 from gateway.config import Platform
 from gateway.run import (
     _prepare_gateway_status_message,
     _sanitize_gateway_final_response,
 )
+
+# Current branch only applies this final-response sanitizer to Telegram.
+CHAT_PLATFORMS = [Platform.TELEGRAM]
 
 
 def test_telegram_status_suppresses_auxiliary_and_retry_noise():
