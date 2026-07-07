@@ -570,8 +570,11 @@ export function useSessionActions({
       const requestId = resumeRequestRef.current + 1
       resumeRequestRef.current = requestId
 
+      const acceptedStoredSessionIds = new Set([storedSessionId])
       const isCurrentResume = () =>
-        resumeRequestRef.current === requestId && selectedStoredSessionIdRef.current === storedSessionId
+        resumeRequestRef.current === requestId &&
+        !!selectedStoredSessionIdRef.current &&
+        acceptedStoredSessionIds.has(selectedStoredSessionIdRef.current)
 
       // Paint the click before the profile-resolve / gateway-swap awaits below,
       // so there's zero dead air: highlight the row instantly (the sidebar reads
@@ -773,9 +776,20 @@ export function useSessionActions({
         }
 
         const resumed = await resumePromise
+        const effectiveStoredSessionId = resumed.session_key || resumed.resumed || storedSessionId
+        acceptedStoredSessionIds.add(effectiveStoredSessionId)
 
         if (!isCurrentResume()) {
           return
+        }
+
+        if (effectiveStoredSessionId !== storedSessionId) {
+          runtimeIdByStoredSessionIdRef.current.delete(storedSessionId)
+          setSelectedStoredSessionId(effectiveStoredSessionId)
+          selectedStoredSessionIdRef.current = effectiveStoredSessionId
+          setResumeFailedSessionId(current => (current === storedSessionId ? null : current))
+          setResumeExhaustedSessionId(current => (current === storedSessionId ? null : current))
+          navigate(sessionRoute(effectiveStoredSessionId), { replace: true })
         }
 
         const currentMessages = $messages.get()
@@ -813,7 +827,7 @@ export function useSessionActions({
         if (sessionShouldHaveTranscript(stored) && messagesForView.length === 0) {
           setActiveSessionId(null)
           activeSessionIdRef.current = null
-          setResumeFailedSessionId(storedSessionId)
+          setResumeFailedSessionId(effectiveStoredSessionId)
           resumedRunning = false
 
           return
@@ -823,10 +837,9 @@ export function useSessionActions({
         activeSessionIdRef.current = resumed.session_id
         const runtimeInfo = applyRuntimeInfo(resumed.info)
 
-        patchSessionWorkspace(storedSessionId, runtimeInfo?.cwd)
+        patchSessionWorkspace(effectiveStoredSessionId, runtimeInfo?.cwd)
 
         resumedRunning = Boolean((resumed as { running?: boolean }).running)
-
         updateSessionState(
           resumed.session_id,
           state => ({
@@ -836,8 +849,9 @@ export function useSessionActions({
             busy: resumedRunning,
             awaitingResponse: resumedRunning
           }),
-          storedSessionId
+          effectiveStoredSessionId
         )
+
       } catch (err) {
         if (!isCurrentResume()) {
           return
@@ -891,6 +905,7 @@ export function useSessionActions({
       activeSessionIdRef,
       busyRef,
       copy,
+      navigate,
       requestGateway,
       runtimeIdByStoredSessionIdRef,
       selectedStoredSessionIdRef,

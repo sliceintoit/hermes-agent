@@ -62,6 +62,11 @@ interface MessageStreamOptions {
     storedSessionId?: string | null,
     runtimeSessionId?: string | null
   ) => Promise<void>
+  onSessionRotated?: (event: {
+    oldSessionKey: string
+    runtimeSessionId: string
+    sessionKey: string
+  }) => void
   queryClient: QueryClient
   refreshHermesConfig: () => Promise<void>
   refreshSessions: () => Promise<void>
@@ -256,6 +261,7 @@ function delegateTaskPayloads(
 export function useMessageStream({
   activeSessionIdRef,
   hydrateFromStoredSession,
+  onSessionRotated,
   queryClient,
   refreshHermesConfig,
   refreshSessions,
@@ -1081,6 +1087,18 @@ export function useMessageStream({
           // completions / watch matches here — re-sync the status stack.
           void refreshBackgroundProcesses(sessionId)
         }
+      } else if (event.type === 'session.rotated') {
+        if (!sessionId) {
+          return
+        }
+
+        const oldSessionKey = firstString(payload?.old_session_key, payload?.old_session_id)
+        const sessionKey = firstString(payload?.session_key, payload?.new_session_id)
+
+        if (oldSessionKey && sessionKey && oldSessionKey !== sessionKey) {
+          onSessionRotated?.({ oldSessionKey, runtimeSessionId: sessionId, sessionKey })
+          void refreshSessions().catch(() => undefined)
+        }
       } else if (event.type === 'error') {
         const errorMessage = payload?.message || 'Hermes reported an error'
         const looksLikeProviderSetup = isProviderSetupErrorMessage(errorMessage)
@@ -1134,8 +1152,10 @@ export function useMessageStream({
       completeAssistantMessage,
       failAssistantMessage,
       flushQueuedDeltas,
+      onSessionRotated,
       queryClient,
       refreshHermesConfig,
+      refreshSessions,
       sessionInterrupted,
       updateSessionState,
       upsertToolCall

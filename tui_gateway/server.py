@@ -2477,6 +2477,21 @@ def _sync_session_key_after_compress(
         except Exception:
             pass
 
+    try:
+        _emit(
+            "session.rotated",
+            sid,
+            {
+                "old_session_key": old_key,
+                "session_key": new_session_id,
+                "old_session_id": old_key,
+                "new_session_id": new_session_id,
+                "runtime_session_id": sid,
+            },
+        )
+    except Exception:
+        pass
+
 
 def _get_usage(agent) -> dict:
     g = lambda k, fb=None: getattr(agent, k, 0) or (getattr(agent, fb, 0) if fb else 0)

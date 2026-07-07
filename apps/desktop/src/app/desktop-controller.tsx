@@ -74,6 +74,7 @@ import {
   setMessagingPlatformTotals,
   setMessagingSessions,
   setMessagingTruncated,
+  setSelectedStoredSessionId,
   setSessionProfileTotals,
   setSessions,
   setSessionsLoading,
@@ -632,9 +633,71 @@ export function DesktopController() {
     [activeSessionIdRef, selectedStoredSessionIdRef, updateSessionState]
   )
 
+  const handleSessionRotated = useCallback(
+    ({
+      oldSessionKey,
+      runtimeSessionId,
+      sessionKey
+    }: {
+      oldSessionKey: string
+      runtimeSessionId: string
+      sessionKey: string
+    }) => {
+      if (!oldSessionKey || !sessionKey || oldSessionKey === sessionKey) {
+        return
+      }
+
+      runtimeIdByStoredSessionIdRef.current.delete(oldSessionKey)
+      runtimeIdByStoredSessionIdRef.current.set(sessionKey, runtimeSessionId)
+
+      updateSessionState(
+        runtimeSessionId,
+        state => ({
+          ...state,
+          storedSessionId: sessionKey
+        }),
+        sessionKey
+      )
+
+      if (selectedStoredSessionIdRef.current === oldSessionKey) {
+        setSelectedStoredSessionId(sessionKey)
+        selectedStoredSessionIdRef.current = sessionKey
+      }
+
+      setSessions(prev => {
+        const hasTip = prev.some(session => session.id === sessionKey)
+
+        return prev.flatMap(session => {
+          if (session.id !== oldSessionKey) {
+            return [session]
+          }
+
+          if (hasTip) {
+            return []
+          }
+
+          return [
+            {
+              ...session,
+              id: sessionKey,
+              _lineage_root_id: session._lineage_root_id ?? oldSessionKey,
+              is_active: true
+            }
+          ]
+        })
+      })
+
+      if (routedSessionId === oldSessionKey) {
+        navigate(sessionRoute(sessionKey), { replace: true })
+      }
+    },
+    [navigate, routedSessionId, runtimeIdByStoredSessionIdRef, selectedStoredSessionIdRef, updateSessionState]
+  )
+
   const { handleGatewayEvent } = useMessageStream({
     activeSessionIdRef,
     hydrateFromStoredSession,
+    onSessionRotated: handleSessionRotated,
     queryClient,
     refreshHermesConfig,
     refreshSessions,

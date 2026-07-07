@@ -86,6 +86,54 @@ def test_session_context_uses_session_cwd(monkeypatch, tmp_path):
         server._sessions.pop(sid, None)
 
 
+def test_sync_session_key_after_compress_emits_rotation_event(monkeypatch):
+    emitted = []
+    sid = "runtime-compress"
+    session = {
+        "agent": types.SimpleNamespace(session_id="child-session"),
+        "pending_title": "keep me",
+        "session_key": "parent-session",
+    }
+
+    monkeypatch.setattr(server, "_emit", lambda kind, target, payload=None: emitted.append((kind, target, payload)))
+    monkeypatch.setattr(server, "_restart_slash_worker", lambda *_args, **_kwargs: None)
+
+    server._sync_session_key_after_compress(
+        sid,
+        session,
+        clear_pending_title=False,
+        restart_slash_worker=True,
+    )
+
+    assert session["session_key"] == "child-session"
+    assert session["pending_title"] == "keep me"
+    assert emitted[-1] == (
+        "session.rotated",
+        sid,
+        {
+            "old_session_key": "parent-session",
+            "session_key": "child-session",
+            "old_session_id": "parent-session",
+            "new_session_id": "child-session",
+            "runtime_session_id": sid,
+        },
+    )
+
+
+def test_sync_session_key_after_compress_skips_event_when_key_unchanged(monkeypatch):
+    emitted = []
+    session = {
+        "agent": types.SimpleNamespace(session_id="same-session"),
+        "session_key": "same-session",
+    }
+
+    monkeypatch.setattr(server, "_emit", lambda *args: emitted.append(args))
+
+    server._sync_session_key_after_compress("runtime", session)
+
+    assert emitted == []
+
+
 def test_handoff_fail_marks_only_inflight_rows(monkeypatch):
     class DbContext:
         def __init__(self, db):

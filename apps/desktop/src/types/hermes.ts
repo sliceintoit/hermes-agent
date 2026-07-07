@@ -345,6 +345,9 @@ export interface SessionResumeResponse {
   messages: SessionMessage[]
   resumed: string
   session_id: string
+  /** Stored session id currently backing this runtime. May differ from the
+   *  requested id when the requested session compressed into a continuation. */
+  session_key?: string
 }
 
 export interface SessionRuntimeInfo {

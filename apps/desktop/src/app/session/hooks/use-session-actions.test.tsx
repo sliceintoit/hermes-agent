@@ -1,6 +1,7 @@
 import { cleanup, render, waitFor } from '@testing-library/react'
 import type { MutableRefObject } from 'react'
 import { useEffect } from 'react'
+import type { NavigateFunction } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { getSessionMessages, type SessionInfo } from '@/hermes'
@@ -11,6 +12,7 @@ import {
   $currentCwd,
   $messages,
   $resumeFailedSessionId,
+  $selectedStoredSessionId,
   setActiveSessionId,
   setMessages,
   setResumeFailedSessionId,
@@ -157,12 +159,14 @@ function ResumeHarness({
   onReady,
   requestGateway,
   runtimeIdByStoredSessionIdRef,
-  sessionStateByRuntimeIdRef
+  sessionStateByRuntimeIdRef,
+  navigate = vi.fn() as unknown as NavigateFunction
 }: {
   onReady: (resume: (storedSessionId: string, replaceRoute?: boolean) => Promise<unknown>) => void
   requestGateway: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
   runtimeIdByStoredSessionIdRef?: MutableRefObject<Map<string, string>>
   sessionStateByRuntimeIdRef?: MutableRefObject<Map<string, ClientSessionState>>
+  navigate?: NavigateFunction
 }) {
   const ref = <T,>(value: T): MutableRefObject<T> => ({ current: value })
 
@@ -173,7 +177,7 @@ function ResumeHarness({
     creatingSessionRef: ref(false),
     ensureSessionState: () => ({}) as ClientSessionState,
     getRouteToken: () => 'token',
-    navigate: vi.fn() as never,
+    navigate,
     requestGateway,
     runtimeIdByStoredSessionIdRef: runtimeIdByStoredSessionIdRef ?? ref(new Map<string, string>()),
     selectedStoredSessionId: null,
@@ -194,6 +198,7 @@ describe('resumeSession failure recovery', () => {
   afterEach(() => {
     cleanup()
     setActiveSessionId(null)
+    $selectedStoredSessionId.set(null)
     setResumeFailedSessionId(null)
     setMessages([])
     setSessions([])
@@ -203,6 +208,7 @@ describe('resumeSession failure recovery', () => {
   async function runResume(
     requestGateway: <T>(method: string, params?: Record<string, unknown>) => Promise<T>,
     options: {
+      navigate?: NavigateFunction
       runtimeIdByStoredSessionIdRef?: MutableRefObject<Map<string, string>>
       sessionStateByRuntimeIdRef?: MutableRefObject<Map<string, ClientSessionState>>
     } = {}
@@ -294,6 +300,35 @@ describe('resumeSession failure recovery', () => {
     await runResume(requestGateway)
 
     expect($resumeFailedSessionId.get()).toBeNull()
+  })
+
+  it('migrates selected stored id and route when resume returns a continuation session_key', async () => {
+    const navigate = vi.fn()
+    const runtimeIdByStoredSessionIdRef = {
+      current: new Map([['stored-1', 'runtime-1']])
+    } satisfies MutableRefObject<Map<string, string>>
+
+    const requestGateway = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'session.resume') {
+        return {
+          session_id: 'runtime-1',
+          resumed: 'stored-1',
+          session_key: 'stored-continuation',
+          messages: [{ content: 'hi', role: 'assistant', timestamp: 1 }],
+          info: {}
+        } as never
+      }
+
+      return {} as never
+    })
+
+    vi.mocked(getSessionMessages).mockResolvedValue({ messages: [] } as never)
+
+    await runResume(requestGateway, { navigate, runtimeIdByStoredSessionIdRef })
+
+    expect(runtimeIdByStoredSessionIdRef.current.has('stored-1')).toBe(false)
+    expect($selectedStoredSessionId.get()).toBe('stored-continuation')
+    expect(navigate).toHaveBeenCalledWith('/stored-continuation', { replace: true })
   })
 
   it('resumes via the gateway default (deferred build) — not lazy, no eager opt-out', async () => {
@@ -414,6 +449,7 @@ describe('resumeSession warm-cache mapping integrity', () => {
   afterEach(() => {
     cleanup()
     setActiveSessionId(null)
+    $selectedStoredSessionId.set(null)
     setResumeFailedSessionId(null)
     setMessages([])
     setSessions([])

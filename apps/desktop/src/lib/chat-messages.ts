@@ -52,6 +52,12 @@ export type GatewayEventPayload = {
   credential_warning?: string
   personality?: string
   usage?: Partial<UsageStats>
+  // session.rotated (auto-compression rotated stored identity)
+  old_session_key?: string
+  session_key?: string
+  old_session_id?: string
+  new_session_id?: string
+  runtime_session_id?: string
   // clarify.request
   request_id?: string
   question?: string
