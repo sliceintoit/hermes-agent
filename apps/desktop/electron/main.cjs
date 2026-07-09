@@ -5237,19 +5237,17 @@ function createWindow() {
 
   mainWindow.webContents.on('unresponsive', () => rememberLog('[renderer] webContents became unresponsive'))
 
-  // Electron always passes the event first. The canonical (Electron 36+) shape
-  // is (event, messageDetails); the deprecated positional shape is
-  // (event, level, message, line, sourceId). Handle both. `level` is numeric
-  // (0..3), where 3 === error.
-  mainWindow.webContents.on('console-message', (_event, detailsOrLevel, message, line, sourceId) => {
-    const details = detailsOrLevel && typeof detailsOrLevel === 'object' ? detailsOrLevel : null
-    const level = details ? details.level : detailsOrLevel
+  // Electron 36+ exposes console-message details on the event object itself.
+  // Avoid the deprecated positional arguments (level, message, line, sourceId)
+  // because Electron warns when handlers depend on that legacy shape.
+  mainWindow.webContents.on('console-message', event => {
+    const level = event?.level
 
-    if (level !== 3) return
+    if (level !== 'error' && level !== 3) return
 
-    const text = details ? details.message : message
-    const src = details ? details.sourceUrl : sourceId
-    const lineNo = details ? details.lineNumber : line
+    const text = event?.message
+    const src = event?.sourceId || event?.sourceUrl
+    const lineNo = event?.lineNumber
     rememberLog(`[renderer console] ${text} (${src}:${lineNo})`)
   })
 
