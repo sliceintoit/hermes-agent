@@ -7,6 +7,7 @@ Handles: hermes gateway [run|start|stop|restart|status|install|uninstall|setup]
 import asyncio
 import logging
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -130,22 +131,21 @@ def _get_service_pids() -> set:
         try:
             label = get_launchd_label()
             result = subprocess.run(
-                ["launchctl", "list", label],
+                ["launchctl", "print", f"{_launchd_domain()}/{label}"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
             if result.returncode == 0:
-                # Output: "PID\tStatus\tLabel" header, then one data line
-                for line in result.stdout.strip().splitlines():
-                    parts = line.split()
-                    if len(parts) >= 3 and parts[2] == label:
-                        try:
-                            pid = int(parts[0])
-                            if pid > 0:
-                                pids.add(pid)
-                        except ValueError:
-                            pass
+                # `launchctl list <label>` has two incompatible output shapes:
+                # a three-column table on older releases and a plist-style
+                # block on modern macOS. `launchctl print <domain>/<label>`
+                # consistently exposes the live runtime PID as `pid = N`.
+                match = re.search(r"(?m)^\s*pid\s*=\s*(\d+)\s*$", result.stdout)
+                if match:
+                    pid = int(match.group(1))
+                    if pid > 0:
+                        pids.add(pid)
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 

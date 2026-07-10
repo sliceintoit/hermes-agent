@@ -820,6 +820,29 @@ def test_find_gateway_pids_falls_back_to_pid_file_when_process_scan_fails(monkey
     assert gateway.find_gateway_pids() == [321]
 
 
+def test_get_service_pids_reads_pid_from_launchctl_print_on_macos(monkeypatch):
+    monkeypatch.setattr(gateway, "is_macos", lambda: True)
+    monkeypatch.setattr(gateway, "get_launchd_label", lambda: "ai.hermes.gateway")
+    monkeypatch.setattr(gateway, "_launchd_domain", lambda: "gui/501")
+
+    def fake_run(cmd, **kwargs):
+        assert cmd == ["launchctl", "print", "gui/501/ai.hermes.gateway"]
+        return SimpleNamespace(
+            returncode=0,
+            stdout="""
+gui/501/ai.hermes.gateway = {
+    state = running
+    pid = 58027
+}
+""",
+            stderr="",
+        )
+
+    monkeypatch.setattr(gateway.subprocess, "run", fake_run)
+
+    assert gateway._get_service_pids() == {58027}
+
+
 def test_scan_gateway_pids_detects_windows_hermes_exe_case_variants(monkeypatch):
     monkeypatch.setattr(gateway, "is_windows", lambda: True)
     monkeypatch.setattr(gateway, "_get_ancestor_pids", lambda: set())
