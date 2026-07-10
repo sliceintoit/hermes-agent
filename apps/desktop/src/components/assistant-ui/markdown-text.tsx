@@ -237,7 +237,7 @@ function childrenToText(children: unknown): string {
   return ''
 }
 
-function MarkdownLink({ children, className, href, ...props }: ComponentProps<'a'>) {
+export function MarkdownLink({ children, className, href, onClick, ...props }: ComponentProps<'a'>) {
   const mediaPath = mediaPathFromMarkdownHref(href)
 
   if (mediaPath) {
@@ -253,13 +253,30 @@ function MarkdownLink({ children, className, href, ...props }: ComponentProps<'a
   const target = href ? normalizeExternalUrl(href) : href
 
   if (!target || !/^https?:\/\//i.test(target)) {
+    const desktopFileTarget = target && /^file:/i.test(target) ? target : ''
+
     return (
       <a
         className={cn(
           'font-semibold text-foreground underline underline-offset-4 decoration-current/20 wrap-anywhere',
           className
         )}
-        href={href}
+        href={target}
+        onClick={
+          desktopFileTarget
+            ? event => {
+                event.stopPropagation()
+                onClick?.(event)
+
+                if (event.defaultPrevented) {
+                  return
+                }
+
+                event.preventDefault()
+                openExternalLink(desktopFileTarget)
+              }
+            : onClick
+        }
         rel="noopener noreferrer"
         target="_blank"
         {...props}
