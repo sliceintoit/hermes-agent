@@ -23,6 +23,7 @@ import { ExpandableBlock } from '@/components/chat/expandable-block'
 import { PreviewAttachment } from '@/components/chat/preview-attachment'
 import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
+import { decodeDesktopFileLink, remarkDesktopFileLinks } from '@/lib/desktop-file-link'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
 import { createMemoizedMathPlugin } from '@/lib/katex-memo'
 import { preprocessMarkdown } from '@/lib/markdown-preprocess'
@@ -53,6 +54,7 @@ import { cn } from '@/lib/utils'
 // `singleDollarTextMath: true` enables `$x^2$` for inline math (de-facto
 // LLM convention). The default false-setting only accepts `$$...$$`.
 const mathPlugin = createMemoizedMathPlugin({ singleDollarTextMath: true })
+const remarkPlugins = [remarkDesktopFileLinks]
 
 // Replaces Streamdown's `parseIncompleteMarkdown` (full-text remend per
 // flush) with a tail-bounded repair — see lib/remend-tail.ts. Must stay
@@ -238,6 +240,7 @@ function childrenToText(children: unknown): string {
 }
 
 export function MarkdownLink({ children, className, href, onClick, ...props }: ComponentProps<'a'>) {
+  const protectedFileTarget = decodeDesktopFileLink(href)
   const mediaPath = mediaPathFromMarkdownHref(href)
 
   if (mediaPath) {
@@ -250,7 +253,7 @@ export function MarkdownLink({ children, className, href, onClick, ...props }: C
     return <PreviewAttachment source="explicit-link" target={previewTarget} />
   }
 
-  const target = href ? normalizeExternalUrl(href) : href
+  const target = protectedFileTarget ?? (href ? normalizeExternalUrl(href) : href)
 
   if (!target || !/^https?:\/\//i.test(target)) {
     const desktopFileTarget = target && /^file:/i.test(target) ? target : ''
@@ -625,6 +628,7 @@ function MarkdownTextSurface({ containerClassName, containerProps }: MarkdownTex
       parseMarkdownIntoBlocksFn={parseMarkdownIntoBlocksCached}
       plugins={plugins}
       preprocess={preprocessWithTailRepair}
+      remarkPlugins={remarkPlugins}
     />
   )
 }

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { MarkdownLink } from './markdown-text'
+import { MarkdownLink, MarkdownTextContent } from './markdown-text'
 
 const desktopWindow = window as unknown as { hermesDesktop?: Window['hermesDesktop'] }
 const initialHermesDesktop = desktopWindow.hermesDesktop
@@ -18,6 +18,27 @@ afterEach(() => {
 })
 
 describe('MarkdownLink', () => {
+  it('preserves and opens file URLs through the complete markdown pipeline', async () => {
+    const openExternal = vi.fn().mockResolvedValue(undefined)
+
+    desktopWindow.hermesDesktop = {
+      openExternal
+    } as unknown as Window['hermesDesktop']
+
+    render(
+      <MarkdownTextContent
+        isRunning={false}
+        text="[Open local report](file:///Users/hermes/Hedge1-Learnings.html)"
+      />
+    )
+
+    const link = await screen.findByRole('link', { name: 'Open local report' })
+
+    expect(screen.queryByText('[blocked]')).toBeNull()
+    fireEvent.click(link)
+    expect(openExternal).toHaveBeenCalledWith('file:///Users/hermes/Hedge1-Learnings.html')
+  })
+
   it('opens file URLs through the validated desktop bridge', () => {
     const openExternal = vi.fn().mockResolvedValue(undefined)
 
