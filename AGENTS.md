@@ -70,9 +70,8 @@ main checkout).
 
 ## Project Structure
 
-File counts shift constantly — don't treat the tree below as exhaustive.
-The canonical source is the filesystem. The notes call out the load-bearing
-entry points you'll actually edit.
+File counts shift constantly — don't treat the tree as exhaustive. The notes
+call out the entry points you'll actually edit.
 
 ```
 hermes-agent/
@@ -160,11 +159,11 @@ run_agent.py, cli.py, batch_runner.py, environments/
 
 ## Expanded Reference
 
-The root `AGENTS.md` is the always-loaded, high-signal policy file. Detailed
-architecture, subsystem, workflow, skill, and testing reference material lives in
-`references/agents-reference.md` and should be consulted on demand.
+The root file is the always-loaded, high-signal policy layer. Long-form architecture,
+subsystem, workflow, skill, and testing reference lives in
+`references/agents-reference.md` and is consulted on demand.
 
-Read `references/agents-reference.md` when the task touches:
+Read it when the task touches:
 
 - `AIAgent` / conversation-loop internals
 - CLI slash-command plumbing or the TUI / desktop chat surfaces
@@ -172,11 +171,8 @@ Read `references/agents-reference.md` when the task touches:
 - toolsets, delegation, curator, cron, or kanban internals
 - detailed testing policy, subprocess isolation, or Windows test quirks
 
-Keep the root file focused on invariants, merge criteria, profile safety, prompt-cache
-safety, and recurring pitfalls. Put long-form reference material in the reference file
-instead of growing the core prompt again.
-
----
+Keep the root file to invariants, merge criteria, profile safety, and prompt-cache
+safety; push everything else into the reference file.
 
 ---
 
@@ -184,7 +180,7 @@ instead of growing the core prompt again.
 
 ### Prompt Caching Must Not Break
 
-Hermes-Agent ensures caching remains valid throughout a conversation. **Do NOT implement changes that would:**
+**Do NOT implement changes that would:**
 - Alter past context mid-conversation
 - Change toolsets mid-conversation
 - Reload memories or rebuild system prompts mid-conversation
@@ -221,33 +217,25 @@ automatically scope to the active profile.
 
 ### Rules for profile-safe code
 
-1. **Use `get_hermes_home()` for all HERMES_HOME paths.** Import from `hermes_constants`.
-   NEVER hardcode `~/.hermes` or `Path.home() / ".hermes"` in code that reads/writes state.
+1. **Use `get_hermes_home()` for all HERMES_HOME paths** (module-level constants are fine —
+   they cache it at import time, after `_apply_profile_override()` sets the env var). NEVER
+   hardcode `~/.hermes` or `Path.home() / ".hermes"` in code that reads/writes state.
    ```python
-   # GOOD
-   from hermes_constants import get_hermes_home
-   config_path = get_hermes_home() / "config.yaml"
+   from hermes_constants import get_hermes_home, display_hermes_home
 
-   # BAD — breaks profiles
+   # GOOD — both state paths and user-facing messages go through the helpers
+   config_path = get_hermes_home() / "config.yaml"
+   print(f"Config saved to {display_hermes_home()}/config.yaml")
+
+   # BAD — breaks profiles / shows wrong path for profiles
    config_path = Path.home() / ".hermes" / "config.yaml"
+   print("Config saved to ~/.hermes/config.yaml")
    ```
 
 2. **Use `display_hermes_home()` for user-facing messages.** Import from `hermes_constants`.
    This returns `~/.hermes` for default or `~/.hermes/profiles/<name>` for profiles.
-   ```python
-   # GOOD
-   from hermes_constants import display_hermes_home
-   print(f"Config saved to {display_hermes_home()}/config.yaml")
 
-   # BAD — shows wrong path for profiles
-   print("Config saved to ~/.hermes/config.yaml")
-   ```
-
-3. **Module-level constants are fine** — they cache `get_hermes_home()` at import time,
-   which is AFTER `_apply_profile_override()` sets the env var. Just use `get_hermes_home()`,
-   not `Path.home() / ".hermes"`.
-
-4. **Tests that mock `Path.home()` must also set `HERMES_HOME`** — since code now uses
+3. **Tests that mock `Path.home()` must also set `HERMES_HOME`** — since code now uses
    `get_hermes_home()` (reads env var), not `Path.home() / ".hermes"`:
    ```python
    with patch.object(Path, "home", return_value=tmp_path), \
@@ -255,13 +243,13 @@ automatically scope to the active profile.
        ...
    ```
 
-5. **Gateway platform adapters should use token locks** — if the adapter connects with
+4. **Gateway platform adapters should use token locks** — if the adapter connects with
    a unique credential (bot token, API key), call `acquire_scoped_lock()` from
    `gateway.status` in the `connect()`/`start()` method and `release_scoped_lock()` in
    `disconnect()`/`stop()`. This prevents two profiles from using the same credential.
    See `gateway/platforms/telegram.py` for the canonical pattern.
 
-6. **Profile operations are HOME-anchored, not HERMES_HOME-anchored** — `_get_profiles_root()`
+5. **Profile operations are HOME-anchored, not HERMES_HOME-anchored** — `_get_profiles_root()`
    returns `Path.home() / ".hermes" / "profiles"`, NOT `get_hermes_home() / "profiles"`.
    This is intentional — it lets `hermes -p coder profile list` see all profiles regardless
    of which one is active.
@@ -318,24 +306,14 @@ The `_isolate_hermes_home` autouse fixture in `tests/conftest.py` redirects `HER
 
 **Profile tests**: When testing profile features, also mock `Path.home()` so that
 `_get_profiles_root()` and `_get_default_hermes_home()` resolve within the temp dir.
-Use the pattern from `tests/hermes_cli/test_profiles.py`:
-```python
-@pytest.fixture
-def profile_env(tmp_path, monkeypatch):
-    home = tmp_path / ".hermes"
-    home.mkdir()
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    monkeypatch.setenv("HERMES_HOME", str(home))
-    return home
-```
+Reuse the mock pattern from Profile Rule 3 (mock `Path.home()` + set `HERMES_HOME`).
 
 ---
 
 ## Testing
 
 **Always use `scripts/run_tests.sh`** — not raw `pytest` — for CI-parity local runs.
-Detailed rationale, subprocess-isolation behavior, wrapper guarantees, Windows
-workarounds, and anti-patterns now live in `references/agents-reference.md`.
+Detailed testing rationale and anti-patterns live in `references/agents-reference.md`.
 
 Common entry points:
 
