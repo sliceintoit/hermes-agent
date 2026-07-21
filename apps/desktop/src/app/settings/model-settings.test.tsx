@@ -112,6 +112,18 @@ describe('ModelSettings', () => {
     await waitFor(() => expect(setEnvVar).toHaveBeenCalledWith('DEEPSEEK_API_KEY', 'sk-test-123'))
   })
 
+  it('offers Extra High, Max, and Ultra as profile reasoning defaults', async () => {
+    await renderModelSettings()
+    await waitFor(() => expect(getHermesConfigRecord).toHaveBeenCalled())
+
+    const triggers = screen.getAllByRole('combobox')
+    fireEvent.click(triggers[2])
+
+    expect(await screen.findByRole('option', { name: 'Extra High' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Max' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Ultra' })).toBeTruthy()
+  })
+
   it('writes the profile default speed (service_tier) when the fast switch is toggled', async () => {
     await renderModelSettings()
     await waitFor(() => expect(getHermesConfigRecord).toHaveBeenCalled())

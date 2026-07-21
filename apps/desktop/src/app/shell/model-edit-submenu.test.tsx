@@ -72,6 +72,15 @@ describe('ModelEditSubmenu no-session guard', () => {
     expect(requestGateway).not.toHaveBeenCalled()
   })
 
+  it('offers Extra High, Max, and Ultra reasoning levels', () => {
+    const requestGateway = vi.fn().mockResolvedValue({})
+    renderSubmenu({ fastControl: { kind: 'none' }, reasoning: true, requestGateway })
+
+    expect(screen.getByText('Extra High')).toBeTruthy()
+    expect(screen.getByText('Max')).toBeTruthy()
+    expect(screen.getByText('Ultra')).toBeTruthy()
+  })
+
   it('param fast: pushes to the gateway once a session is active', async () => {
     const requestGateway = vi.fn().mockResolvedValue({})
     $activeSessionId.set('sess1')

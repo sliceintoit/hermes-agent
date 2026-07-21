@@ -1187,7 +1187,9 @@ export interface Translations {
       low: string
       medium: string
       high: string
+      xhigh: string
       max: string
+      ultra: string
       updateFailed: string
       fastFailed: string
     }

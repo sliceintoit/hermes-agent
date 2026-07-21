@@ -20,6 +20,11 @@ _LM_VALID_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 # Map them onto the OpenAI-compatible request vocabulary.
 _LM_EFFORT_ALIASES = {"off": "none", "on": "medium"}
 
+# Hermes' generic effort ladder extends past LM Studio's vocabulary. Clamp the
+# stronger generic levels onto LM Studio's declared ceiling; otherwise they
+# miss _LM_VALID_EFFORTS and silently fall back to "medium".
+_LM_EFFORT_CLAMP = {"max": "xhigh", "ultra": "xhigh"}
+
 
 def resolve_lmstudio_effort(
     reasoning_config: Optional[dict],
@@ -39,6 +44,7 @@ def resolve_lmstudio_effort(
         else:
             raw = (reasoning_config.get("effort") or "").strip().lower()
             raw = _LM_EFFORT_ALIASES.get(raw, raw)
+            raw = _LM_EFFORT_CLAMP.get(raw, raw)
             if raw in _LM_VALID_EFFORTS:
                 effort = raw
     if allowed_options:
