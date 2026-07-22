@@ -11,8 +11,12 @@ import {
   storedStringArray,
   storedStringRecord
 } from '@/lib/storage'
+import { clearBackgroundRunningIndicators } from '@/store/composer-status'
 import { $gateway, ensureGatewayForProfile } from '@/store/gateway'
-import { setConnection } from '@/store/session'
+import {
+  clearTransientSessionIndicators,
+  setConnection
+} from '@/store/session'
 import type { ProfileInfo } from '@/types/hermes'
 
 // Canonical key for a profile: trimmed, empty → "default". Used everywhere we
@@ -228,6 +232,9 @@ export async function ensureGatewayProfile(profile: string | null | undefined): 
   if (normalizeProfileKey($activeGatewayProfile.get()) === target && $gateway.get()) {
     return
   }
+
+  clearTransientSessionIndicators()
+  clearBackgroundRunningIndicators()
 
   // Serialize concurrent activations so two rapid session switches don't race
   // the active pointer.

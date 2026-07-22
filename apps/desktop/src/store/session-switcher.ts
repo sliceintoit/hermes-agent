@@ -13,6 +13,38 @@ export const $switcherOpen = atom(false)
 export const $switcherSessions = atom<SessionInfo[]>([])
 export const $switcherIndex = atom(0)
 
+export type SessionSwitcherDotTone = 'attention' | 'active-working' | 'background-working' | 'finished-unread' | 'idle'
+
+export function getSessionSwitcherDotTone({
+  attention,
+  backgroundRunning,
+  unread,
+  working
+}: {
+  attention: boolean
+  backgroundRunning: boolean
+  unread: boolean
+  working: boolean
+}): SessionSwitcherDotTone {
+  if (attention) {
+    return 'attention'
+  }
+
+  if (working) {
+    return 'active-working'
+  }
+
+  if (backgroundRunning) {
+    return 'background-working'
+  }
+
+  if (unread) {
+    return 'finished-unread'
+  }
+
+  return 'idle'
+}
+
 const wrap = (index: number, length: number): number => ((index % length) + length) % length
 
 let pendingBrowse = false
@@ -95,8 +127,7 @@ export function openOrAdvanceSwitcher(direction: 1 | -1): string | null {
   return sessions[nextIndex]?.id ?? null
 }
 
-export const highlightedSessionId = (): string | null =>
-  $switcherSessions.get()[$switcherIndex.get()]?.id ?? null
+export const highlightedSessionId = (): string | null => $switcherSessions.get()[$switcherIndex.get()]?.id ?? null
 
 export const slotSessionId = (slot: number): string | null =>
   ($switcherOpen.get() || pendingBrowse ? $switcherSessions.get() : $sessions.get())[slot - 1]?.id ?? null

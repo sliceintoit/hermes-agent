@@ -16,7 +16,7 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/lib/query-client', () => ({ queryClient: { invalidateQueries: vi.fn() } }))
 
 const { $activeGatewayProfile, ensureGatewayProfile } = await import('./profile')
-const { $connection } = await import('./session')
+const { $attentionSessionIds, $connection, $unreadFinishedSessionIds, $workingSessionIds } = await import('./session')
 
 const remoteConn = (over: Partial<HermesConnection> = {}): HermesConnection =>
   ({ baseUrl: 'https://hermes-roy.tail.ts.net', mode: 'remote', profile: 'vps-remote', ...over }) as HermesConnection
@@ -32,6 +32,9 @@ beforeEach(() => {
   $gateway.set({ id: 'live-socket' })
   $activeGatewayProfile.set('default')
   $connection.set(localConn())
+  $attentionSessionIds.set([])
+  $workingSessionIds.set([])
+  $unreadFinishedSessionIds.set([])
   vi.stubGlobal('window', { hermesDesktop: { getConnection } })
 })
 
@@ -41,6 +44,19 @@ afterEach(() => {
 })
 
 describe('ensureGatewayProfile → $connection sync (#46651)', () => {
+  it('clears transient session markers when switching gateways', async () => {
+    $attentionSessionIds.set(['s1'])
+    $workingSessionIds.set(['s1'])
+    $unreadFinishedSessionIds.set(['s2'])
+    getConnection.mockResolvedValue(remoteConn())
+
+    await ensureGatewayProfile('vps-remote')
+
+    expect($attentionSessionIds.get()).toEqual([])
+    expect($workingSessionIds.get()).toEqual([])
+    expect($unreadFinishedSessionIds.get()).toEqual([])
+  })
+
   it('refreshes $connection to the remote descriptor when activating a remote pool profile', async () => {
     // Regression: the primary window backend is local, so $connection.mode is
     // "local". Activating the remote profile must flip it to "remote" — without

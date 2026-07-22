@@ -9,6 +9,7 @@ import {
   $switcherSessions,
   closeSwitcher,
   commitOnCtrlUp,
+  getSessionSwitcherDotTone,
   onSwitcherTabDown,
   onSwitcherTabUp,
   openOrAdvanceSwitcher,
@@ -101,6 +102,52 @@ describe('openOrAdvanceSwitcher', () => {
     onSwitcherTabUp()
 
     expect(commitOnCtrlUp()).toBe('c')
+  })
+})
+
+describe('getSessionSwitcherDotTone', () => {
+  it('prioritizes attention over every other state', () => {
+    expect(
+      getSessionSwitcherDotTone({
+        attention: true,
+        backgroundRunning: true,
+        unread: true,
+        working: true
+      })
+    ).toBe('attention')
+  })
+
+  it('uses the blue active state for an LLM turn even when a process is also running', () => {
+    expect(
+      getSessionSwitcherDotTone({
+        attention: false,
+        backgroundRunning: true,
+        unread: false,
+        working: true
+      })
+    ).toBe('active-working')
+  })
+
+  it('uses the gray background state for a live process after the LLM turn settles', () => {
+    expect(
+      getSessionSwitcherDotTone({
+        attention: false,
+        backgroundRunning: true,
+        unread: true,
+        working: false
+      })
+    ).toBe('background-working')
+  })
+
+  it('uses the green unread state after a finished session settles', () => {
+    expect(
+      getSessionSwitcherDotTone({
+        attention: false,
+        backgroundRunning: false,
+        unread: true,
+        working: false
+      })
+    ).toBe('finished-unread')
   })
 })
 

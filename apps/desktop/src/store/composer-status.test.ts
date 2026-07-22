@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { $backgroundStatusBySession, dismissBackgroundProcess, reconcileBackgroundProcesses } from './composer-status'
+import {
+  $backgroundRunningSessionIds,
+  $backgroundStatusBySession,
+  clearBackgroundRunningIndicators,
+  dismissBackgroundProcess,
+  reconcileBackgroundProcesses
+} from './composer-status'
 
 const SID = 'sess-1'
 
@@ -18,6 +24,7 @@ const items = () => $backgroundStatusBySession.get()[SID] ?? []
 describe('reconcileBackgroundProcesses', () => {
   beforeEach(() => {
     $backgroundStatusBySession.set({})
+    clearBackgroundRunningIndicators()
   })
 
   it('maps registry entries to status items', () => {
@@ -95,5 +102,22 @@ describe('reconcileBackgroundProcesses', () => {
     reconcileBackgroundProcesses(SID, [])
 
     expect($backgroundStatusBySession.get()).toEqual({})
+  })
+
+  it('bridges live runtime processes to the stored session id used by sidebar rows', () => {
+    reconcileBackgroundProcesses(SID, [running('a')], 'stored-1')
+
+    expect($backgroundRunningSessionIds.get()).toEqual(['stored-1'])
+
+    reconcileBackgroundProcesses(SID, [exited('a')])
+
+    expect($backgroundRunningSessionIds.get()).toEqual([])
+  })
+
+  it('replaces a stale stored-session mapping when a runtime session rotates', () => {
+    reconcileBackgroundProcesses(SID, [running('a')], 'stored-old')
+    reconcileBackgroundProcesses(SID, [running('a')], 'stored-new')
+
+    expect($backgroundRunningSessionIds.get()).toEqual(['stored-new'])
   })
 })

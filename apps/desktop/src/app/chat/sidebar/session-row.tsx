@@ -12,7 +12,9 @@ import { sessionTitle } from '@/lib/chat-runtime'
 import { triggerHaptic } from '@/lib/haptics'
 import { handoffOriginSource, sessionSourceLabel } from '@/lib/session-source'
 import { cn } from '@/lib/utils'
-import { $attentionSessionIds } from '@/store/session'
+import { $backgroundRunningSessionIds } from '@/store/composer-status'
+import { $attentionSessionIds, $unreadFinishedSessionIds } from '@/store/session'
+import { getSessionSwitcherDotTone } from '@/store/session-switcher'
 import { canOpenSessionWindow, openSessionInNewWindow } from '@/store/windows'
 
 import { SessionActionsMenu, SessionContextMenu } from './session-actions-menu'
@@ -75,11 +77,13 @@ export function SidebarSessionRow({
   // messaging platform — surface that origin as a small badge so e.g. a
   // Telegram thread continued here still reads as Telegram.
   const handoffSource = handoffOriginSource(session.handoff_state, session.handoff_platform)
-  const handoffLabel = handoffSource ? sessionSourceLabel(handoffSource) ?? handoffSource : null
+  const handoffLabel = handoffSource ? (sessionSourceLabel(handoffSource) ?? handoffSource) : null
   // Subscribe per-row (the leaf) instead of drilling a set through the list —
   // the atom is tiny and rarely non-empty. True when a clarify prompt in this
   // session is waiting on the user.
   const needsInput = useStore($attentionSessionIds).includes(session.id)
+  const finishedUnread = useStore($unreadFinishedSessionIds).includes(session.id)
+  const backgroundRunning = useStore($backgroundRunningSessionIds).includes(session.id)
 
   return (
     <SessionContextMenu
@@ -122,7 +126,7 @@ export function SidebarSessionRow({
         style={style}
         {...rest}
       >
-        {isWorking && !needsInput && <span aria-hidden="true" className="arc-border" />}
+        {isWorking && isSelected && !needsInput && <span aria-hidden="true" className="arc-border" />}
         <button
           className="z-0 flex min-w-0 items-center gap-1.5 bg-transparent py-0.5 pl-2 pr-1 text-left group-hover:pr-12"
           onClick={event => {
@@ -172,6 +176,8 @@ export function SidebarSessionRow({
             >
               <SidebarRowDot
                 className="transition-opacity group-hover/handle:opacity-0 group-focus-within/handle:opacity-0"
+                backgroundRunning={backgroundRunning}
+                finishedUnread={finishedUnread}
                 isWorking={isWorking}
                 needsInput={needsInput}
               />
@@ -191,7 +197,12 @@ export function SidebarSessionRow({
                 needsInput ? 'overflow-visible' : 'overflow-hidden'
               )}
             >
-              <SidebarRowDot isWorking={isWorking} needsInput={needsInput} />
+              <SidebarRowDot
+                backgroundRunning={backgroundRunning}
+                finishedUnread={finishedUnread}
+                isWorking={isWorking}
+                needsInput={needsInput}
+              />
             </span>
           )}
           {handoffSource && handoffLabel ? (
@@ -239,22 +250,32 @@ export function SidebarSessionRow({
 }
 
 function SidebarRowDot({
+  backgroundRunning,
+  finishedUnread,
   isWorking,
   needsInput = false,
   className
 }: {
+  backgroundRunning: boolean
+  finishedUnread: boolean
   isWorking: boolean
   needsInput?: boolean
   className?: string
 }) {
   const { t } = useI18n()
   const r = t.sidebar.row
+  const tone = getSessionSwitcherDotTone({
+    attention: needsInput,
+    backgroundRunning,
+    unread: finishedUnread,
+    working: isWorking
+  })
 
   // "Needs input" wins over "working": a clarify-blocked session is technically
   // still running, but the actionable state is that it's waiting on the user.
   // Amber + steady (no ping) reads as "your turn", distinct from the accent
   // pulse of an active turn.
-  if (needsInput) {
+  if (tone === 'attention') {
     return (
       <span
         aria-label={r.needsInput}
@@ -270,9 +291,12 @@ function SidebarRowDot({
       aria-label={isWorking ? r.sessionRunning : undefined}
       className={cn(
         'rounded-full',
-        isWorking
-          ? "relative size-1.5 bg-(--ui-accent) shadow-[0_0_0.625rem_color-mix(in_srgb,var(--ui-accent)_55%,transparent)] before:absolute before:inset-0 before:animate-ping before:rounded-full before:bg-(--ui-accent) before:opacity-70 before:content-['']"
-          : 'size-1 bg-(--ui-text-quaternary) opacity-80',
+        tone === 'active-working' &&
+          "relative size-1.5 bg-(--ui-accent) shadow-[0_0_0.625rem_color-mix(in_srgb,var(--ui-accent)_55%,transparent)] before:absolute before:inset-0 before:animate-ping before:rounded-full before:bg-(--ui-accent) before:opacity-70 before:content-['']",
+        tone === 'background-working' &&
+          "relative size-1.5 bg-(--ui-text-quaternary) opacity-80 shadow-[0_0_0.625rem_color-mix(in_srgb,var(--ui-text-quaternary)_45%,transparent)] before:absolute before:inset-0 before:animate-ping before:rounded-full before:bg-(--ui-text-quaternary) before:opacity-60 before:content-['']",
+        tone === 'finished-unread' && 'size-1.5 bg-emerald-500',
+        tone === 'idle' && 'size-1 bg-(--ui-text-quaternary) opacity-80',
         className
       )}
       role={isWorking ? 'status' : undefined}

@@ -203,6 +203,7 @@ export const $messagingTruncated = atom<boolean>(false)
 export const $sessionProfileTotals = atom<Record<string, number>>({})
 export const $sessionsLoading = atom(true)
 export const $workingSessionIds = atom<string[]>([])
+export const $unreadFinishedSessionIds = atom<string[]>([])
 export const $activeSessionId = atom<string | null>(null)
 export const $selectedStoredSessionId = atom<string | null>(null)
 export const $messages = atom<ChatMessage[]>([])
@@ -280,8 +281,19 @@ export const setSessionProfileTotals = (next: Updater<Record<string, number>>) =
   updateAtom($sessionProfileTotals, next)
 export const setSessionsLoading = (next: Updater<boolean>) => updateAtom($sessionsLoading, next)
 export const setWorkingSessionIds = (next: Updater<string[]>) => updateAtom($workingSessionIds, next)
+export const setUnreadFinishedSessionIds = (next: Updater<string[]>) => updateAtom($unreadFinishedSessionIds, next)
 export const setActiveSessionId = (next: Updater<string | null>) => updateAtom($activeSessionId, next)
-export const setSelectedStoredSessionId = (next: Updater<string | null>) => updateAtom($selectedStoredSessionId, next)
+export function setSelectedStoredSessionId(next: Updater<string | null>) {
+  updateAtom($selectedStoredSessionId, current => {
+    const value = typeof next === 'function' ? next(current) : next
+
+    if (value) {
+      setUnreadFinishedSessionIds(ids => ids.filter(id => id !== value))
+    }
+
+    return value
+  })
+}
 export const setMessages = (next: Updater<ChatMessage[]>) => updateAtom($messages, next)
 export const setFreshDraftReady = (next: Updater<boolean>) => updateAtom($freshDraftReady, next)
 export const setResumeFailedSessionId = (next: Updater<string | null>) => updateAtom($resumeFailedSessionId, next)
@@ -472,6 +484,31 @@ export function setSessionAttention(sessionId: string | null | undefined, needsI
   }
 }
 
+export function markSessionFinishedUnread(sessionId: string | null | undefined) {
+  if (sessionId) {
+    toggleMembership(setUnreadFinishedSessionIds, sessionId, true)
+  }
+}
+
+export function clearSessionFinishedUnread(sessionId: string | null | undefined) {
+  if (sessionId) {
+    setUnreadFinishedSessionIds(ids => ids.filter(id => id !== sessionId))
+  }
+}
+
+export function clearTransientSessionIndicators() {
+  setWorkingSessionIds(() => [])
+  setAttentionSessionIds(() => [])
+  setUnreadFinishedSessionIds(() => [])
+
+  for (const timer of sessionWatchdogTimers.values()) {
+    clearTimeout(timer)
+  }
+
+  sessionWatchdogTimers.clear()
+  settledSessionExpiry.clear()
+}
+
 export function setSessionWorking(sessionId: string | null | undefined, working: boolean) {
   if (!sessionId) {
     return
@@ -495,6 +532,9 @@ export function setSessionWorking(sessionId: string | null | undefined, working:
     // aggregator to return its now-persisted row.
     if (wasWorking) {
       markSessionSettled(sessionId)
+      if ($selectedStoredSessionId.get() !== sessionId) {
+        markSessionFinishedUnread(sessionId)
+      }
     }
   }
 }

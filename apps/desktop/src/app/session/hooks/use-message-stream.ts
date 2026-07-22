@@ -941,7 +941,10 @@ export function useMessageStream({
           // terminal/process tool calls are the only things that spawn or reap
           // background processes — sync the composer status stack right after.
           if (!sessionInterrupted(sessionId) && (payload?.name === 'terminal' || payload?.name === 'process')) {
-            void refreshBackgroundProcesses(sessionId)
+            void refreshBackgroundProcesses(
+              sessionId,
+              sessionStateByRuntimeIdRef.current.get(sessionId)?.storedSessionId
+            )
           }
         }
 
@@ -1100,7 +1103,7 @@ export function useMessageStream({
         } else if (sessionId && payload?.kind === 'process') {
           // The gateway's notification poller announces background process
           // completions / watch matches here — re-sync the status stack.
-          void refreshBackgroundProcesses(sessionId)
+          void refreshBackgroundProcesses(sessionId, sessionStateByRuntimeIdRef.current.get(sessionId)?.storedSessionId)
         }
       } else if (event.type === 'session.rotated') {
         if (!sessionId) {

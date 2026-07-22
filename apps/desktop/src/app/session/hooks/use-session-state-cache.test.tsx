@@ -103,6 +103,19 @@ describe('useSessionStateCache — per-session turn timer', () => {
     expect($turnStartedAt.get()).toBeNull()
   })
 
+  it('records background runtime-to-stored mappings without changing the focused session', () => {
+    let cache!: Cache
+    render(<Harness activeSessionId="fg-runtime" onReady={c => (cache = c)} selectedStoredSessionId="fg-stored" />)
+
+    act(() => {
+      cache.updateSessionState('bg-runtime', state => ({ ...state, busy: true }), 'bg-stored')
+    })
+
+    expect(cache.runtimeIdByStoredSessionIdRef.current.get('bg-stored')).toBe('bg-runtime')
+    expect(cache.selectedStoredSessionIdRef.current).toBe('fg-stored')
+    expect(cache.activeSessionIdRef.current).toBe('fg-runtime')
+  })
+
   it("mirrors the focused session's turn clock into the global atom on view-sync", () => {
     let cache!: Cache
     render(<Harness activeSessionId="fg-runtime" onReady={c => (cache = c)} selectedStoredSessionId="fg-stored" />)

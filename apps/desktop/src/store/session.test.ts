@@ -7,12 +7,15 @@ import {
   $attentionSessionIds,
   $connection,
   $currentCwd,
+  $selectedStoredSessionId,
+  $unreadFinishedSessionIds,
   $workingSessionIds,
   applyConfiguredDefaultProjectDir,
   getRecentlySettledSessionIds,
   mergeSessionPage,
   sessionPinId,
   setCurrentCwd,
+  setSelectedStoredSessionId,
   setSessionAttention,
   setSessionWorking,
   workspaceCwdForNewSession
@@ -62,6 +65,40 @@ describe('setSessionAttention', () => {
     setSessionAttention('', true)
     setSessionAttention('missing', false)
     expect($attentionSessionIds.get()).toEqual([])
+  })
+})
+
+describe('setSelectedStoredSessionId', () => {
+  it('clears the finished-unread marker for the session being opened', () => {
+    $unreadFinishedSessionIds.set(['s1', 's2'])
+    $selectedStoredSessionId.set(null)
+
+    setSelectedStoredSessionId('s1')
+
+    expect($selectedStoredSessionId.get()).toBe('s1')
+    expect($unreadFinishedSessionIds.get()).toEqual(['s2'])
+  })
+})
+
+describe('setSessionWorking', () => {
+  it('marks a finished session unread when another session is selected', () => {
+    $unreadFinishedSessionIds.set([])
+    $selectedStoredSessionId.set('other')
+
+    setSessionWorking('s1', true)
+    setSessionWorking('s1', false)
+
+    expect($unreadFinishedSessionIds.get()).toEqual(['s1'])
+  })
+
+  it('does not mark the currently selected session unread when it finishes', () => {
+    $unreadFinishedSessionIds.set([])
+    $selectedStoredSessionId.set('s1')
+
+    setSessionWorking('s1', true)
+    setSessionWorking('s1', false)
+
+    expect($unreadFinishedSessionIds.get()).toEqual([])
   })
 })
 

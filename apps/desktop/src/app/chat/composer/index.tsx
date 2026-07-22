@@ -1882,6 +1882,7 @@ export function ChatBar({
               ) : null
             }
             sessionId={statusSessionId}
+            storedSessionId={queueSessionKey ?? null}
           />
           <div
             className="pointer-events-none absolute inset-0 rounded-[inherit]"

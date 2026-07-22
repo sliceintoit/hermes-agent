@@ -34,6 +34,45 @@ export interface ComposerStatusItem {
 // registry (`terminal(background=true)` spawns) via `process.list`.
 export const $backgroundStatusBySession = atom<Record<string, ComposerStatusItem[]>>({})
 
+// Sidebar rows use stored session ids, while process.list and gateway events
+// use runtime ids. Keep the bridge here because this store owns the process
+// registry mirror; callers supply the stored id whenever the session cache has
+// resolved it.
+export const $backgroundRunningSessionIds = atom<string[]>([])
+const storedSessionIdByRuntime = new Map<string, string>()
+
+function setBackgroundRunning(runtimeSessionId: string, storedSessionId: string | null | undefined, running: boolean) {
+  const previousStoredSessionId = storedSessionIdByRuntime.get(runtimeSessionId)
+
+  if (storedSessionId && previousStoredSessionId !== storedSessionId) {
+    if (previousStoredSessionId) {
+      $backgroundRunningSessionIds.set($backgroundRunningSessionIds.get().filter(id => id !== previousStoredSessionId))
+    }
+
+    storedSessionIdByRuntime.set(runtimeSessionId, storedSessionId)
+  }
+
+  const resolvedStoredSessionId = storedSessionId ?? previousStoredSessionId
+
+  if (!resolvedStoredSessionId) {
+    return
+  }
+
+  const current = $backgroundRunningSessionIds.get()
+  const has = current.includes(resolvedStoredSessionId)
+
+  if (running !== has) {
+    $backgroundRunningSessionIds.set(
+      running ? [...current, resolvedStoredSessionId] : current.filter(id => id !== resolvedStoredSessionId)
+    )
+  }
+}
+
+export function clearBackgroundRunningIndicators() {
+  $backgroundRunningSessionIds.set([])
+  storedSessionIdByRuntime.clear()
+}
+
 // Rows the user X-ed away. The registry keeps finished processes around for a
 // while, so without this every refresh would resurrect a dismissed row.
 const dismissedBySession = new Map<string, Set<string>>()
@@ -152,7 +191,11 @@ const sameItem = (a: ComposerStatusItem, b: ComposerStatusItem) =>
  * processes append, dismissed ids stay gone, and unchanged rows keep their
  * object identity so memoised rows skip re-rendering.
  */
-export function reconcileBackgroundProcesses(sid: string, procs: GatewayProcessEntry[]) {
+export function reconcileBackgroundProcesses(
+  sid: string,
+  procs: GatewayProcessEntry[],
+  storedSessionId?: string | null
+) {
   const dismissed = dismissedBySession.get(sid)
 
   const fresh = new Map(
@@ -190,6 +233,12 @@ export function reconcileBackgroundProcesses(sid: string, procs: GatewayProcessE
 
   const next = [...kept, ...fresh.values()]
 
+  setBackgroundRunning(
+    sid,
+    storedSessionId,
+    next.some(item => item.state === 'running')
+  )
+
   // Dismissals only need remembering while the registry still reports the id.
   if (dismissed) {
     const reported = new Set(procs.map(proc => proc.session_id))
@@ -209,7 +258,7 @@ export function reconcileBackgroundProcesses(sid: string, procs: GatewayProcessE
 }
 
 /** Pull the session's live process snapshot from the gateway. */
-export async function refreshBackgroundProcesses(sid: string): Promise<void> {
+export async function refreshBackgroundProcesses(sid: string, storedSessionId?: string | null): Promise<void> {
   const gateway = $gateway.get()
 
   if (!sid || !gateway) {
@@ -219,7 +268,7 @@ export async function refreshBackgroundProcesses(sid: string): Promise<void> {
   try {
     const result = await gateway.request<{ processes?: GatewayProcessEntry[] }>('process.list', { session_id: sid })
 
-    reconcileBackgroundProcesses(sid, result?.processes ?? [])
+    reconcileBackgroundProcesses(sid, result?.processes ?? [], storedSessionId)
   } catch {
     // Transient socket loss — the next trigger (event or poll) retries.
   }
@@ -274,4 +323,5 @@ export function resetSessionBackground(sid: string) {
 
   dismissedBySession.set(sid, dismissed)
   writeBackground(sid, [])
+  setBackgroundRunning(sid, undefined, false)
 }

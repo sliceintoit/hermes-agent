@@ -41,6 +41,7 @@ interface ComposerStatusStackProps {
    *  as the last group so it stays fused to the composer like before. */
   queue: ReactNode
   sessionId: null | string
+  storedSessionId: null | string
 }
 
 /**
@@ -48,7 +49,7 @@ interface ComposerStatusStackProps {
  * every session-scoped status — subagents, background tasks, queue — grouped by
  * type and separated by light dividers. Collapses to nothing when empty.
  */
-export function ComposerStatusStack({ queue, sessionId }: ComposerStatusStackProps) {
+export function ComposerStatusStack({ queue, sessionId, storedSessionId }: ComposerStatusStackProps) {
   const { t } = useI18n()
   const navigate = useNavigate()
   const itemsBySession = useStore($statusItemsBySession)
@@ -63,9 +64,9 @@ export function ComposerStatusStack({ queue, sessionId }: ComposerStatusStackPro
   // process tool completions) live in use-message-stream.
   useEffect(() => {
     if (sessionId) {
-      void refreshBackgroundProcesses(sessionId)
+      void refreshBackgroundProcesses(sessionId, storedSessionId)
     }
-  }, [sessionId])
+  }, [sessionId, storedSessionId])
 
   const hasRunningBackground = groups.some(g => g.type === 'background' && g.items.some(i => i.state === 'running'))
 
@@ -74,10 +75,10 @@ export function ComposerStatusStack({ queue, sessionId }: ComposerStatusStackPro
       return
     }
 
-    const timer = setInterval(() => void refreshBackgroundProcesses(sessionId), BACKGROUND_POLL_MS)
+    const timer = setInterval(() => void refreshBackgroundProcesses(sessionId, storedSessionId), BACKGROUND_POLL_MS)
 
     return () => clearInterval(timer)
-  }, [hasRunningBackground, sessionId])
+  }, [hasRunningBackground, sessionId, storedSessionId])
 
   const openAgents = () => navigate(AGENTS_ROUTE)
 
