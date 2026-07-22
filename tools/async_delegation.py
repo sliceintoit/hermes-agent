@@ -160,6 +160,8 @@ def dispatch_async_delegation(
     runner: Callable[[], Dict[str, Any]],
     interrupt_fn: Optional[Callable[[], None]] = None,
     max_async_children: int = _DEFAULT_MAX_ASYNC_CHILDREN,
+    delegation_id: Optional[str] = None,
+    live_transcripts: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Spawn ``runner`` on the daemon executor and return a handle immediately.
 
@@ -190,7 +192,7 @@ def dispatch_async_delegation(
         ``{"status": "dispatched", "delegation_id": ...}`` on success, or
         ``{"status": "rejected", "error": ...}`` when at capacity.
     """
-    delegation_id = _new_delegation_id()
+    delegation_id = delegation_id or _new_delegation_id()
     dispatched_at = time.time()
     record: Dict[str, Any] = {
         "delegation_id": delegation_id,
@@ -204,6 +206,7 @@ def dispatch_async_delegation(
         "dispatched_at": dispatched_at,
         "completed_at": None,
         "interrupt_fn": interrupt_fn,
+        "live_transcripts": list(live_transcripts or []),
     }
     # Capacity check and record insert under ONE lock hold — checking
     # active_count() separately would let two concurrent dispatches (e.g.
@@ -260,7 +263,11 @@ def dispatch_async_delegation(
         "Dispatched async delegation %s (session_key=%s): %s",
         delegation_id, session_key or "<cli>", (goal or "")[:80],
     )
-    return {"status": "dispatched", "delegation_id": delegation_id}
+    return {
+        "status": "dispatched",
+        "delegation_id": delegation_id,
+        "live_transcripts": list(live_transcripts or []),
+    }
 
 
 def _finalize(delegation_id: str, result: Dict[str, Any], status: str) -> None:
@@ -323,6 +330,7 @@ def _push_completion_event(
         "dispatched_at": dispatched_at,
         "completed_at": completed_at,
         "exit_reason": result.get("exit_reason"),
+        "live_transcripts": record.get("live_transcripts") or [],
     }
     try:
         process_registry.completion_queue.put(evt)
@@ -345,6 +353,8 @@ def dispatch_async_delegation_batch(
     runner: Callable[[], Dict[str, Any]],
     interrupt_fn: Optional[Callable[[], None]] = None,
     max_async_children: int = _DEFAULT_MAX_ASYNC_CHILDREN,
+    delegation_id: Optional[str] = None,
+    live_transcripts: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Dispatch a WHOLE fan-out batch as ONE background unit.
 
@@ -366,7 +376,7 @@ def dispatch_async_delegation_batch(
     ``{"status": "rejected", "error": ...}`` when the async pool is at
     capacity.
     """
-    delegation_id = _new_delegation_id()
+    delegation_id = delegation_id or _new_delegation_id()
     dispatched_at = time.time()
     n = len(goals)
     # A combined goal label for status listings / the completion header.
@@ -387,6 +397,7 @@ def dispatch_async_delegation_batch(
         "completed_at": None,
         "interrupt_fn": interrupt_fn,
         "is_batch": True,
+        "live_transcripts": list(live_transcripts or []),
     }
     with _records_lock:
         running = sum(
@@ -445,7 +456,11 @@ def dispatch_async_delegation_batch(
         "Dispatched async delegation batch %s (%d task(s), session_key=%s)",
         delegation_id, n, session_key or "<cli>",
     )
-    return {"status": "dispatched", "delegation_id": delegation_id}
+    return {
+        "status": "dispatched",
+        "delegation_id": delegation_id,
+        "live_transcripts": list(live_transcripts or []),
+    }
 
 
 def _finalize_batch(
@@ -493,6 +508,7 @@ def _finalize_batch(
         "total_duration_seconds": combined.get("total_duration_seconds"),
         "dispatched_at": dispatched_at,
         "completed_at": completed_at,
+        "live_transcripts": event_record.get("live_transcripts") or [],
     }
     try:
         process_registry.completion_queue.put(evt)

@@ -37,6 +37,11 @@ from toolsets import TOOLSETS
 # Must match hermes_cli.runtime_provider.RUNTIME_PROVIDER_TYPE_CUSTOM.
 _RUNTIME_PROVIDER_CUSTOM = "custom"
 from tools import file_state
+from tools.delegation_live_log import (
+    create_live_transcripts,
+    update_manifest_statuses,
+    wrap_progress_callback,
+)
 from tools.terminal_tool import set_approval_callback as _set_subagent_approval_cb
 from utils import base_url_hostname, is_truthy_value
 
@@ -1465,9 +1470,31 @@ def _run_single_child(
 
     # Get the progress callback from the child agent
     child_progress_cb = getattr(child, "tool_progress_callback", None)
+    live_writer = getattr(child, "_live_transcript_writer", None)
+    live_transcript_path = (
+        str(getattr(live_writer, "path", "")) if live_writer is not None else ""
+    )
 
-    # Restore parent tool names using the value saved before child construction
-    # mutated the global. This is the correct parent toolset, not the child's.
+    def _finalize_live_transcript(payload: Dict[str, Any]) -> None:
+        if live_writer is None:
+            return
+        try:
+            live_writer.finalize(
+                status=payload.get("status"),
+                summary=payload.get("summary"),
+                error=payload.get("error"),
+                exit_reason=payload.get("exit_reason"),
+                duration_seconds=payload.get("duration_seconds"),
+            )
+        except Exception as exc:
+            logger.debug("Live transcript finalize failed: %s", exc)
+        try:
+            update_manifest_statuses(
+                getattr(live_writer, "delegation_id", None),
+                [payload],
+            )
+        except Exception as exc:
+            logger.debug("Live transcript manifest update failed: %s", exc)
     import model_tools
 
     _saved_tool_names = getattr(
@@ -1739,7 +1766,7 @@ def _run_single_child(
             else:
                 _err = str(_timeout_exc)
 
-            return {
+            entry = {
                 "task_index": task_index,
                 "status": "timeout" if is_timeout else "error",
                 "summary": None,
@@ -1750,6 +1777,10 @@ def _run_single_child(
                 "_child_role": getattr(child, "_delegate_role", None),
                 "diagnostic_path": diagnostic_path,
             }
+            if live_transcript_path:
+                entry["live_transcript"] = live_transcript_path
+            _finalize_live_transcript(entry)
+            return entry
         finally:
             # Shut down executor without waiting — if the child thread
             # is stuck on blocking I/O, wait=True would hang forever.
@@ -1863,6 +1894,8 @@ def _run_single_child(
                 else 0.0
             ),
         }
+        if live_transcript_path:
+            entry["live_transcript"] = live_transcript_path
         if status == "failed":
             entry["error"] = result.get("error", "Subagent did not produce a response.")
 
@@ -1960,6 +1993,7 @@ def _run_single_child(
             except Exception as e:
                 logger.debug("Progress callback completion failed: %s", e)
 
+        _finalize_live_transcript(entry)
         return entry
 
     except Exception as exc:
@@ -1976,7 +2010,7 @@ def _run_single_child(
                 )
             except Exception as e:
                 logger.debug("Progress callback failure relay failed: %s", e)
-        return {
+        entry = {
             "task_index": task_index,
             "status": "error",
             "summary": None,
@@ -1985,6 +2019,10 @@ def _run_single_child(
             "duration_seconds": duration,
             "_child_role": getattr(child, "_delegate_role", None),
         }
+        if live_transcript_path:
+            entry["live_transcript"] = live_transcript_path
+        _finalize_live_transcript(entry)
+        return entry
 
     finally:
         # Stop the heartbeat thread so it doesn't keep touching parent activity
@@ -2190,6 +2228,11 @@ def delegate_task(
         if not task.get("goal", "").strip():
             return tool_error(f"Task {i} is missing a 'goal'.")
 
+    live_delegation_id, live_writers, live_transcripts = create_live_transcripts(
+        task_list,
+        context=context,
+    )
+
     overall_start = time.monotonic()
     results = []
 
@@ -2239,6 +2282,17 @@ def delegate_task(
             )
             # Override with correct parent tool names (before child construction mutated global)
             child._delegate_saved_tool_names = _parent_tool_names
+            live_writer = live_writers[i] if i < len(live_writers) else None
+            if live_writer is not None:
+                setattr(child, "_live_transcript_writer", live_writer)
+                setattr(
+                    child,
+                    "tool_progress_callback",
+                    wrap_progress_callback(
+                        getattr(child, "tool_progress_callback", None),
+                        live_writer,
+                    ),
+                )
             children.append((i, t, child))
     finally:
         # Authoritative restore: reset global to parent's tool names after all children built
@@ -2379,6 +2433,12 @@ def delegate_task(
             results.sort(key=lambda r: r["task_index"])
 
         # Notify parent's memory provider of delegation outcomes
+        if live_transcripts:
+            for entry in results:
+                idx = entry.get("task_index")
+                if isinstance(idx, int) and 0 <= idx < len(live_transcripts):
+                    entry.setdefault("live_transcript", live_transcripts[idx])
+
         if (
             parent_agent
             and hasattr(parent_agent, "_memory_manager")
@@ -2477,6 +2537,8 @@ def delegate_task(
         return {
             "results": results,
             "total_duration_seconds": total_duration,
+            "live_transcripts": [p for p in live_transcripts if p],
+            "delegation_id": live_delegation_id,
         }
 
     # ----- Background dispatch: run the WHOLE batch as one async unit -----
@@ -2532,6 +2594,8 @@ def delegate_task(
             runner=_batch_runner,
             interrupt_fn=_batch_interrupt,
             max_async_children=_get_max_async_children(),
+            delegation_id=live_delegation_id,
+            live_transcripts=[p for p in live_transcripts if p],
         )
 
         if dispatch.get("status") == "dispatched":
@@ -2555,6 +2619,7 @@ def delegate_task(
                 "delegation_id": dispatch["delegation_id"],
                 "goals": _goals,
                 "note": note,
+                "live_transcripts": [p for p in live_transcripts if p],
             }
             return json.dumps(payload, ensure_ascii=False)
 

@@ -1638,6 +1638,7 @@ def _format_async_delegation(evt: dict) -> str:
     goal = evt.get("goal", "") or ""
     context = evt.get("context")
     toolsets = evt.get("toolsets")
+    live_transcripts = evt.get("live_transcripts") or []
     role = evt.get("role") or "leaf"
     model = evt.get("model") or "?"
     status = evt.get("status") or "completed"
@@ -1675,6 +1676,8 @@ def _format_async_delegation(evt: dict) -> str:
         if toolsets:
             lines.append(f"Toolsets: {', '.join(toolsets)}")
         lines.append(f"Role: {role}   Model: {model}   Total duration: {total_dur}s")
+        if live_transcripts:
+            lines.append("Live transcripts: " + ", ".join(live_transcripts))
         if error and not results:
             lines.append("--- ERROR ---")
             lines.append(f"The batch did not complete successfully: {error}")
@@ -1732,6 +1735,8 @@ def _format_async_delegation(evt: dict) -> str:
     if toolsets:
         lines.append(f"Toolsets: {', '.join(toolsets)}")
     lines.append(f"Role: {role}   Model: {model}")
+    if live_transcripts:
+        lines.append("Live transcripts: " + ", ".join(live_transcripts))
     lines.append(f"Status: {status}   API calls: {api_calls}   Duration: {duration}s")
     lines.append("--- RESULT ---")
     if status in ("completed", "success") and summary:

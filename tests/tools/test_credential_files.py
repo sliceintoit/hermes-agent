@@ -203,6 +203,23 @@ class TestIterSkillsFiles:
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
             assert iter_skills_files() == []
 
+class TestCacheDirectoryMounts:
+    def test_includes_delegation_cache_dir(self, tmp_path):
+        hermes_home = tmp_path / ".hermes"
+        delegation_cache = hermes_home / "cache" / "delegation"
+        delegation_cache.mkdir(parents=True)
+        (delegation_cache / "live").mkdir()
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
+            mounts = get_cache_directory_mounts()
+
+        delegation_mounts = [
+            m for m in mounts if m["container_path"].endswith("/cache/delegation")
+        ]
+        assert delegation_mounts, mounts
+        assert delegation_mounts[0]["host_path"] == str(delegation_cache)
+
+
 class TestPathTraversalSecurity:
     """Path traversal and absolute path rejection.
 
