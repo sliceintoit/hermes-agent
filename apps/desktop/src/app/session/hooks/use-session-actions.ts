@@ -721,8 +721,10 @@ export function useSessionActions({
       setFreshDraftReady(false)
       setActiveSessionId(null)
       activeSessionIdRef.current = null
+
+      // A history load is not a live turn. Toggling busy true here and false
+      // again after resume makes the thread viewport repaint unnecessarily.
       busyRef.current = true
-      setBusy(true)
       setAwaitingResponse(false)
       clearNotifications()
       setSelectedStoredSessionId(storedSessionId)
@@ -745,11 +747,12 @@ export function useSessionActions({
       try {
         const watchWindow = isWatchWindow()
         let localSnapshot = $messages.get()
+        let prefetchedSnapshot: ChatMessage[] | null = null
 
         // REST transcript prefetch and the gateway resume RPC are independent
         // — run them concurrently so a big session's wall time is
-        // max(prefetch, resume) instead of their sum. The prefetch paints the
-        // transcript as soon as it lands; the RPC binds the runtime id.
+        // max(prefetch, resume) instead of their sum. Defer painting until both
+        // have landed so the transcript is built only once.
         // Watch windows skip the prefetch — lazy resume attaches the live mirror.
         const prefetchPromise = watchWindow ? null : getSessionMessages(storedSessionId, sessionProfile)
 
@@ -773,11 +776,10 @@ export function useSessionActions({
             const storedMessages = await prefetchPromise
 
             if (isCurrentResume()) {
-              localSnapshot = preserveLocalAssistantErrors(toChatMessages(storedMessages.messages), $messages.get())
-
-              if (!chatMessageArraysEquivalent($messages.get(), localSnapshot)) {
-                setMessages(localSnapshot)
-              }
+              prefetchedSnapshot = preserveLocalAssistantErrors(
+                toChatMessages(storedMessages.messages),
+                $messages.get()
+              )
             }
           }
         } catch {
@@ -790,6 +792,10 @@ export function useSessionActions({
 
         if (!isCurrentResume()) {
           return
+        }
+
+        if (prefetchedSnapshot) {
+          localSnapshot = prefetchedSnapshot
         }
 
         if (effectiveStoredSessionId !== storedSessionId) {
@@ -860,6 +866,13 @@ export function useSessionActions({
           }),
           effectiveStoredSessionId
         )
+
+        // Paint once, after both transcript sources have settled. The session
+        // cache update may flush through requestAnimationFrame, so make the
+        // final viewport update explicit and synchronous.
+        if (!chatMessageArraysEquivalent($messages.get(), messagesForView)) {
+          setMessages(messagesForView)
+        }
 
       } catch (err) {
         if (!isCurrentResume()) {

@@ -283,6 +283,44 @@ describe('resumeSession failure recovery', () => {
     await expect(runResume(requestGateway)).resolves.toBeUndefined()
   })
 
+  it('paints prefetched history only after resume settles', async () => {
+    let finishResume: ((value: unknown) => void) | null = null
+    const resumeResult = new Promise(resolve => {
+      finishResume = resolve
+    })
+
+    const requestGateway = vi.fn(async (method: string) => {
+      if (method === 'session.resume') {
+        return (await resumeResult) as never
+      }
+
+      return {} as never
+    })
+
+    vi.mocked(getSessionMessages).mockResolvedValue({
+      messages: [{ content: 'prefetched history', role: 'user', timestamp: 1 }],
+      session_id: 'stored-1'
+    } as never)
+
+    let resume: ((storedSessionId: string, replaceRoute?: boolean) => Promise<unknown>) | null = null
+    render(<ResumeHarness onReady={r => (resume = r)} requestGateway={requestGateway} />)
+    await waitFor(() => expect(resume).not.toBeNull())
+
+    const pendingResume = resume!('stored-1', true)
+    await waitFor(() => expect(getSessionMessages).toHaveBeenCalledWith('stored-1', undefined))
+    await Promise.resolve()
+
+    // The REST prefetch is ready, but painting it now would produce the first
+    // of two transcript rebuilds. It remains deferred until the RPC binds the
+    // runtime session and the final message source is known.
+    expect($messages.get()).toEqual([])
+
+    finishResume!({ session_id: 'runtime-1', resumed: 'stored-1', messages: [], info: {} })
+    await pendingResume
+
+    expect($messages.get()).toHaveLength(1)
+  })
+
   it('leaves the failure latch clear when resume succeeds', async () => {
     // Pre-arm to prove a successful resume clears it (entry-clear path).
     setResumeFailedSessionId('stored-1')
