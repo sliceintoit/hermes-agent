@@ -1982,7 +1982,11 @@ def _load_enabled_toolsets() -> list[str] | None:
 
             selection = coding_selection(platform="tui")
             if selection is not None:
-                return selection
+                # Fold in `project` here too: this is a GUI-only resolver, and
+                # the focus-mode coding posture returns before the fallback path
+                # that normally adds it — without this the desktop loses the
+                # project tools exactly when sitting in a repo (see below).
+                return sorted({*selection, "project"})
         except Exception:
             pass
 
@@ -2093,7 +2097,15 @@ def _load_enabled_toolsets() -> list[str] | None:
         )
         if fallback_notice is not None:
             print(fallback_notice, file=sys.stderr, flush=True)
-        return enabled or None
+        if not enabled:
+            return None
+        # The desktop Project tools are off _HERMES_CORE_TOOLS (every other
+        # platform would carry their schema for nothing), so the platform
+        # recovery above — which keys off hermes-cli's tool universe — can't
+        # surface them. This resolver runs ONLY in the desktop/TUI gateway, so
+        # folding in the `project` toolset here is the gate that exposes them on
+        # exactly the surface that can follow a project move.
+        return sorted({*enabled, "project"})
     except Exception:
         if fallback_notice is not None:
             print(
@@ -3152,11 +3164,70 @@ def _agent_cbs(sid: str) -> dict:
     }
 
 
+def _apply_project_workspace(task_id: str, path: str, _name: str = "") -> None:
+    """Intentional workspace move from the project_* tools: re-anchor the live
+    session's cwd to the chosen project's folder and push session.info so the
+    desktop follows. This is the ONLY auto-cwd path — driven by an explicit
+    tool call, never a terminal `cd`.
+
+    Backport note: upstream also persists git branch/repo-root enrichment here
+    (``_persist_session_git_meta``) for its Projects sidebar tree; that sidebar
+    is not part of this backport, so only cwd itself is persisted.
+    """
+    if not path:
+        return
+
+    # The tool's task_id is the durable session_key, but _sessions is keyed by a
+    # short sid uuid (and the desktop routes events by that sid). Resolve it.
+    key = str(task_id or "")
+    sid = ""
+    session = None
+    with _sessions_lock:
+        if key in _sessions:
+            sid, session = key, _sessions[key]
+        else:
+            for cand_sid, cand in _sessions.items():
+                if cand.get("session_key") == key or getattr(cand.get("agent"), "session_id", None) == key:
+                    sid, session = cand_sid, cand
+                    break
+
+    if session is None:
+        return
+
+    resolved = os.path.abspath(os.path.expanduser(str(path)))
+    if not os.path.isdir(resolved):
+        return
+
+    session["cwd"] = resolved
+    session["explicit_cwd"] = True
+    _register_session_cwd(session)
+
+    with _session_db(session) as db:
+        if db is not None:
+            try:
+                db.update_session_cwd(session.get("session_key", ""), resolved)
+            except Exception:
+                logger.debug("failed to persist project workspace cwd", exc_info=True)
+
+    try:
+        agent = session.get("agent")
+        info = (
+            _session_info(agent, session)
+            if agent is not None
+            else {"cwd": resolved, "branch": _git_branch_for_cwd(resolved), "lazy": True}
+        )
+        _emit("session.info", sid, info)
+    except Exception:
+        logger.debug("failed to emit session.info after project workspace move", exc_info=True)
+
+
 def _wire_callbacks(sid: str):
     from tools.terminal_tool import set_sudo_password_callback
     from tools.skills_tool import set_secret_capture_callback
+    from tools.project_tools import set_project_workspace_callback
 
     set_sudo_password_callback(lambda: _block("sudo.request", sid, {}, timeout=120))
+    set_project_workspace_callback(_apply_project_workspace)
 
     def secret_cb(env_var, prompt, metadata=None):
         pl = {"prompt": prompt, "env_var": env_var}
