@@ -4180,6 +4180,13 @@ def cmd_kanban(args):
     return kanban_command(args)
 
 
+def cmd_project(args):
+    """Manage projects (named, multi-folder workspaces)."""
+    from hermes_cli.projects_cmd import projects_command
+
+    return projects_command(args)
+
+
 def cmd_hooks(args):
     """Shell-hook inspection and management."""
     from hermes_cli.hooks import hooks_command
@@ -11872,6 +11879,14 @@ def main():
 
     kanban_parser = _build_kanban_parser(subparsers)
     kanban_parser.set_defaults(func=cmd_kanban)
+
+    # =========================================================================
+    # project command — named, multi-folder workspaces
+    # =========================================================================
+    from hermes_cli.projects_cmd import build_parser as _build_project_parser
+
+    project_parser = _build_project_parser(subparsers)
+    project_parser.set_defaults(func=cmd_project)
 
     # =========================================================================
     # hooks command — shell-hook inspection and management
