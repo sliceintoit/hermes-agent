@@ -2,7 +2,7 @@ import { type MutableRefObject, useCallback } from 'react'
 
 import { useI18n } from '@/i18n'
 import { notify, notifyError } from '@/store/notifications'
-import { $currentCwd, setCurrentBranch, setCurrentCwd } from '@/store/session'
+import { $currentCwd, setCurrentBranch, setCurrentCwd, setCurrentProject } from '@/store/session'
 import type { SessionRuntimeInfo } from '@/types/hermes'
 
 interface CwdActionsOptions {
@@ -29,16 +29,18 @@ export function useCwdActions({
       }
 
       try {
-        const info = await requestGateway<{ branch?: string; cwd?: string }>('config.get', {
+        const info = await requestGateway<Pick<SessionRuntimeInfo, 'branch' | 'cwd' | 'project'>>('config.get', {
           key: 'project',
           cwd: target
         })
 
         if (!activeSessionIdRef.current && ($currentCwd.get() || target) === (info.cwd || target)) {
           setCurrentBranch(info.branch || '')
+          setCurrentProject(info.project ?? null)
         }
       } catch {
         setCurrentBranch('')
+        setCurrentProject(null)
       }
     },
     [activeSessionIdRef, requestGateway]
@@ -56,7 +58,7 @@ export function useCwdActions({
         setCurrentCwd(trimmed)
 
         try {
-          const info = await requestGateway<{ branch?: string; cwd?: string }>('config.get', {
+          const info = await requestGateway<Pick<SessionRuntimeInfo, 'branch' | 'cwd' | 'project'>>('config.get', {
             key: 'project',
             cwd: trimmed
           })
@@ -68,8 +70,10 @@ export function useCwdActions({
           }
 
           setCurrentBranch(info.branch || '')
+          setCurrentProject(info.project ?? null)
         } catch {
           setCurrentBranch('')
+          setCurrentProject(null)
         }
 
         return
@@ -83,6 +87,7 @@ export function useCwdActions({
 
         setCurrentCwd(info.cwd || trimmed)
         setCurrentBranch(info.branch || '')
+        setCurrentProject(info.project ?? null)
         onSessionRuntimeInfo?.({ branch: info.branch || '', cwd: info.cwd || trimmed })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
@@ -95,6 +100,7 @@ export function useCwdActions({
 
         setCurrentCwd(trimmed)
         setCurrentBranch('')
+        setCurrentProject(null)
         notify({
           kind: 'warning',
           title: copy.cwdStagedTitle,

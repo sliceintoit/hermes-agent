@@ -37,6 +37,7 @@ import { clearAllPrompts, setApprovalRequest, setSecretRequest, setSudoRequest }
 import {
   setCurrentBranch,
   setCurrentCwd,
+  setCurrentProject,
   setCurrentFastMode,
   setCurrentModel,
   setCurrentPersonality,
@@ -86,7 +87,7 @@ interface QueuedStreamDeltas {
 type SessionRuntimeStatePatch = Partial<
   Pick<
     ClientSessionState,
-    'branch' | 'cwd' | 'fast' | 'model' | 'personality' | 'provider' | 'reasoningEffort' | 'serviceTier' | 'yolo'
+    'branch' | 'cwd' | 'fast' | 'model' | 'personality' | 'project' | 'provider' | 'reasoningEffort' | 'serviceTier' | 'yolo'
   >
 >
 
@@ -107,6 +108,12 @@ function sessionInfoStatePatch(payload: GatewayEventPayload | undefined): Sessio
 
   if (typeof payload?.branch === 'string') {
     patch.branch = payload.branch
+  }
+
+  // Backend always sends the key (null outside any named project), so a
+  // present-but-null value is meaningful and must clear a cached name.
+  if (payload && 'project' in payload) {
+    patch.project = payload.project ?? null
   }
 
   if (typeof payload?.personality === 'string') {
@@ -757,6 +764,13 @@ export function useMessageStream({
             setCurrentBranch(payload.branch)
           }
 
+          // The backend always includes `project` (null when the cwd is in no
+          // named project), so mirror it exactly — a stale name must not
+          // outlive a workspace move.
+          if (payload && 'project' in payload) {
+            setCurrentProject(payload.project ?? null)
+          }
+
           if (typeof payload?.personality === 'string') {
             setCurrentPersonality(normalizePersonalityValue(payload.personality))
           }
@@ -783,7 +797,8 @@ export function useMessageStream({
             ...state,
             ...statePatch,
             branch: statePatch.branch ?? state.branch,
-            cwd: statePatch.cwd ?? state.cwd
+            cwd: statePatch.cwd ?? state.cwd,
+            project: statePatch.project !== undefined ? statePatch.project : state.project
           }))
         }
 

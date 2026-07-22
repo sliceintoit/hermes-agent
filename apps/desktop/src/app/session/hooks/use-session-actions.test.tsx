@@ -396,6 +396,7 @@ describe('resumeSession failure recovery', () => {
             needsInput: false,
             pendingBranchGroup: null,
             personality: '',
+            project: null,
             provider: '',
             reasoningEffort: '',
             sawAssistantPayload: false,

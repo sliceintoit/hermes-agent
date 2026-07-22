@@ -5,7 +5,7 @@ import type { ContextSuggestion } from '@/app/types'
 import type { HermesConnection } from '@/global'
 import type { ChatMessage } from '@/lib/chat-messages'
 import { persistBoolean, persistString, storedBoolean, storedString } from '@/lib/storage'
-import type { SessionInfo, UsageStats } from '@/types/hermes'
+import type { ProjectInfo, SessionInfo, UsageStats } from '@/types/hermes'
 
 type Updater<T> = T | ((current: T) => T)
 
@@ -246,6 +246,11 @@ export const $currentFastMode = atom(storedBoolean(COMPOSER_FAST_KEY, false))
 export const $yoloActive = atom(false)
 export const $currentCwd = atom(getRememberedWorkspaceCwd())
 export const $currentBranch = atom('')
+// First-class Project owning the current workspace, mirrored from the
+// backend's session.info (`project` key, sourced from the per-profile
+// projects.db). Null when the cwd sits in no named project — status surfaces
+// then fall back to the cwd leaf, matching the TUI.
+export const $currentProject = atom<ProjectInfo | null>(null)
 export const $currentUsage = atom<UsageStats>({
   calls: 0,
   input: 0,
@@ -322,6 +327,7 @@ export const workspaceCwdForNewSession = (): string => {
 }
 
 export const setCurrentBranch = (next: Updater<string>) => updateAtom($currentBranch, next)
+export const setCurrentProject = (next: Updater<ProjectInfo | null>) => updateAtom($currentProject, next)
 export const setCurrentUsage = (next: Updater<UsageStats>) => updateAtom($currentUsage, next)
 export const setSessionStartedAt = (next: Updater<number | null>) => updateAtom($sessionStartedAt, next)
 export const setTurnStartedAt = (next: Updater<number | null>) => updateAtom($turnStartedAt, next)

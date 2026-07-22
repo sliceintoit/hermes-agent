@@ -49,6 +49,7 @@ export type GatewayEventPayload = {
   running?: boolean
   cwd?: string
   branch?: string
+  project?: null | { id: string; name: string; primary_path?: null | string; slug: string }
   credential_warning?: string
   personality?: string
   usage?: Partial<UsageStats>

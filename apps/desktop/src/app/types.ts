@@ -1,6 +1,7 @@
 import type * as React from 'react'
 
 import type { ChatMessage } from '@/lib/chat-messages'
+import type { ProjectInfo } from '@/types/hermes'
 
 export interface ContextSuggestion {
   text: string
@@ -131,6 +132,11 @@ export interface ClientSessionState {
   cwd: string
   model: string
   provider: string
+  /** First-class Project owning this session's cwd (from the backend's
+  *  session.info), or null when the cwd sits in no named project. Cached
+  *  per session like `branch` so switching chats restores the label
+  *  immediately instead of waiting for a fresh session.info. */
+  project: ProjectInfo | null
   reasoningEffort: string
   serviceTier: string
   fast: boolean

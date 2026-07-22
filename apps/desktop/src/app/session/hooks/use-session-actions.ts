@@ -28,6 +28,7 @@ import {
   setBusy,
   setCurrentBranch,
   setCurrentCwd,
+  setCurrentProject,
   setCurrentFastMode,
   setCurrentModel,
   setCurrentPersonality,
@@ -293,6 +294,7 @@ type SessionRuntimeStatePatch = Partial<
     | 'fast'
     | 'model'
     | 'personality'
+    | 'project'
     | 'provider'
     | 'reasoningEffort'
     | 'serviceTier'
@@ -331,6 +333,11 @@ function applyRuntimeInfo(info: SessionRuntimeInfo | undefined): SessionRuntimeS
   if (info.branch !== undefined) {
     setCurrentBranch(info.branch || '')
     sessionState.branch = info.branch || ''
+  }
+
+  if (info.project !== undefined) {
+    setCurrentProject(info.project ?? null)
+    sessionState.project = info.project ?? null
   }
 
   if (typeof info.personality === 'string') {
@@ -427,6 +434,7 @@ export function useSessionActions({
       setYoloActive(false)
       setCurrentCwd(workspaceCwdForNewSession())
       setCurrentBranch('')
+      setCurrentProject(null)
       // Never clear the composer here — ChatBar's per-thread draft swap owns it.
       setFreshDraftReady(true)
     },
@@ -679,6 +687,7 @@ export function useSessionActions({
           syncSessionStateToView(cachedRuntimeId, cachedViewState)
           setCurrentCwd(cachedViewState.cwd)
           setCurrentBranch(cachedViewState.branch)
+          setCurrentProject(cachedViewState.project ?? null)
           setSessionStartedAt(Date.now())
 
           try {

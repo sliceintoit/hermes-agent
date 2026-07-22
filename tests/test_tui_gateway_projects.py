@@ -138,3 +138,105 @@ def test_wire_callbacks_sets_project_workspace_callback():
     server._wire_callbacks("sid-x")
 
     assert project_tools._workspace_callback is server._apply_project_workspace
+
+
+# ---------------------------------------------------------------------------
+# Active-project identity in status surfaces (reduced port of 66a7825ebb0e):
+# _project_info_for_cwd reads the per-profile projects.db and is threaded
+# through session.info and /status. Tests run under the suite-wide isolated
+# HERMES_HOME (tests/conftest.py), so projects_db writes stay per-test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def named_project(tmp_path):
+    from hermes_cli import projects_db as pdb
+
+    folder = tmp_path / "repo"
+    folder.mkdir()
+    with pdb.connect_closing() as conn:
+        pid = pdb.create_project(conn, name="Demo Project", folders=[str(folder)])
+    return pid, folder
+
+
+def test_project_info_for_cwd_resolves_named_project(named_project):
+    pid, folder = named_project
+
+    info = server._project_info_for_cwd(str(folder))
+
+    assert info is not None
+    assert info["id"] == pid
+    assert info["name"] == "Demo Project"
+    assert info["primary_path"] == str(folder)
+
+
+def test_project_info_for_cwd_matches_nested_paths(named_project):
+    _pid, folder = named_project
+    nested = folder / "src" / "pkg"
+    nested.mkdir(parents=True)
+
+    info = server._project_info_for_cwd(str(nested))
+    assert info is not None
+    assert info["name"] == "Demo Project"
+
+
+def test_project_info_for_cwd_none_outside_projects(tmp_path):
+    assert server._project_info_for_cwd(str(tmp_path)) is None
+    assert server._project_info_for_cwd("") is None
+
+
+def test_session_info_threads_project(monkeypatch, named_project):
+    from types import SimpleNamespace
+
+    _pid, folder = named_project
+    monkeypatch.setattr(server, "_load_cfg", lambda: {})
+    monkeypatch.setattr(server, "_get_usage", lambda agent: {})
+    monkeypatch.setattr(server, "_probe_credentials", lambda agent: None)
+    agent = SimpleNamespace(
+        model="test-model",
+        provider="test-provider",
+        reasoning_config=None,
+        service_tier=None,
+        tools=[],
+    )
+    session = {"session_key": "k1", "cwd": str(folder), "running": False}
+
+    info = server._session_info(agent, session)
+
+    assert info["project"]["name"] == "Demo Project"
+
+
+def test_session_info_project_none_without_match(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(server, "_load_cfg", lambda: {})
+    monkeypatch.setattr(server, "_get_usage", lambda agent: {})
+    monkeypatch.setattr(server, "_probe_credentials", lambda agent: None)
+    agent = SimpleNamespace(
+        model="m", provider="p", reasoning_config=None, service_tier=None, tools=[]
+    )
+
+    info = server._session_info(agent, {"cwd": str(tmp_path), "running": False})
+
+    assert info["project"] is None
+
+
+def test_status_output_includes_project_line(monkeypatch, named_project):
+    _pid, folder = named_project
+    session = {"session_key": "k-status", "cwd": str(folder), "running": False, "agent": None}
+    monkeypatch.setattr(server, "_sessions", {"sid-status": session})
+
+    resp = server._methods["session.status"](1, {"session_id": "sid-status"})
+
+    assert "error" not in resp, resp.get("error")
+    assert "Project: Demo Project" in resp["result"]["output"]
+
+
+def test_status_output_omits_project_line_without_match(monkeypatch, tmp_path):
+    session = {"session_key": "k-plain", "cwd": str(tmp_path), "running": False, "agent": None}
+    monkeypatch.setattr(server, "_sessions", {"sid-plain": session})
+
+    resp = server._methods["session.status"](1, {"session_id": "sid-plain"})
+
+    assert "error" not in resp, resp.get("error")
+    assert "Project:" not in resp["result"]["output"]

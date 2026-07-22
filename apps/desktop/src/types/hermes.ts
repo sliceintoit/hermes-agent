@@ -350,6 +350,13 @@ export interface SessionResumeResponse {
   session_key?: string
 }
 
+export interface ProjectInfo {
+  id: string
+  name: string
+  primary_path?: null | string
+  slug: string
+}
+
 export interface SessionRuntimeInfo {
   branch?: string
   config_warning?: string
@@ -359,6 +366,7 @@ export interface SessionRuntimeInfo {
   fast?: boolean
   model?: string
   personality?: string
+  project?: null | ProjectInfo
   provider?: string
   reasoning_effort?: string
   running?: boolean

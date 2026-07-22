@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Clock,
   Command,
+  FolderOpen,
   Hash,
   Loader2,
   Sparkles,
@@ -27,6 +28,8 @@ import {
   $activeSessionId,
   $busy,
   $connection,
+  $currentCwd,
+  $currentProject,
   $currentUsage,
   $sessionStartedAt,
   $turnStartedAt,
@@ -47,6 +50,10 @@ import type { StatusResponse } from '@/types/hermes'
 
 import { CRON_ROUTE } from '../../routes'
 import type { StatusbarItem, StatusbarSelectModifiers } from '../statusbar-controls'
+
+// Workspace label fallback when the cwd sits in no named project: the cwd's
+// leaf folder name (the full path stays in the item's tooltip).
+const workspaceLeaf = (cwd: string) => cwd.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || cwd
 
 interface StatusbarItemsOptions {
   agentsOpen: boolean
@@ -84,6 +91,8 @@ export function useStatusbarItems({
   const { t } = useI18n()
   const copy = t.shell.statusbar
   const activeSessionId = useStore($activeSessionId)
+  const currentCwd = useStore($currentCwd)
+  const currentProject = useStore($currentProject)
   const terminalTakeover = useStore($terminalTakeover)
   const yoloActive = useStore($yoloActive)
   const busy = useStore($busy)
@@ -299,6 +308,17 @@ export function useStatusbarItems({
         variant: 'action'
       },
       {
+        hidden: !currentCwd,
+        icon: <FolderOpen className="size-3" />,
+        id: 'workspace-cwd',
+        // Prefer the named project; fall back to the cwd leaf. The full cwd is
+        // always in the tooltip, so hovering reveals where the session
+        // actually sits — the worktree/subfolder, not just the project.
+        label: currentProject?.name || workspaceLeaf(currentCwd),
+        title: currentCwd || undefined,
+        variant: 'text'
+      },
+      {
         className: gatewayClassName,
         detail: gatewayDetail,
         icon: inferenceReady ? <Activity className="size-3" /> : <AlertCircle className="size-3" />,
@@ -351,6 +371,8 @@ export function useStatusbarItems({
       bgRunning,
       commandCenterOpen,
       copy,
+      currentCwd,
+      currentProject,
       gatewayMenuContent,
       gatewayClassName,
       gatewayDetail,

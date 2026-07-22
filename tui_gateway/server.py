@@ -2621,6 +2621,34 @@ def _current_profile_name() -> str:
 DESKTOP_BACKEND_CONTRACT = 2
 
 
+def _project_info_for_cwd(cwd: str) -> dict | None:
+    """Return the first-class Project owning ``cwd`` for UI status surfaces.
+
+    Backed by the per-profile projects.db, so the TUI status label, the desktop
+    status bar, and ``/status`` all name the session's workspace identically.
+    Only explicit, named projects resolve here — an auto-discovered repo root
+    has no projects.db row, so it falls back to the cwd leaf on every surface.
+    """
+    if not str(cwd or "").strip():
+        return None
+    try:
+        from hermes_cli import projects_db as pdb
+
+        with pdb.connect_closing() as conn:
+            project = pdb.project_for_path(conn, cwd)
+        if project is None:
+            return None
+        return {
+            "id": project.id,
+            "slug": project.slug,
+            "name": project.name,
+            "primary_path": project.primary_path,
+        }
+    except Exception:
+        logger.debug("failed to resolve project for cwd", exc_info=True)
+        return None
+
+
 def _session_info(agent, session: dict | None = None) -> dict:
     if session is None:
         for candidate in _sessions.values():
@@ -2668,6 +2696,7 @@ def _session_info(agent, session: dict | None = None) -> dict:
         "skills": {},
         "cwd": cwd,
         "branch": _git_branch_for_cwd(cwd),
+        "project": _project_info_for_cwd(cwd),
         "personality": str(personality or ""),
         "running": bool((session or {}).get("running")),
         "desktop_contract": DESKTOP_BACKEND_CONTRACT,
@@ -3214,7 +3243,12 @@ def _apply_project_workspace(task_id: str, path: str, _name: str = "") -> None:
         info = (
             _session_info(agent, session)
             if agent is not None
-            else {"cwd": resolved, "branch": _git_branch_for_cwd(resolved), "lazy": True}
+            else {
+                "cwd": resolved,
+                "branch": _git_branch_for_cwd(resolved),
+                "project": _project_info_for_cwd(resolved),
+                "lazy": True,
+            }
         )
         _emit("session.info", sid, info)
     except Exception:
@@ -4314,6 +4348,7 @@ def _(rid, params: dict) -> dict:
                 "skills": {},
                 "cwd": _sessions[sid]["cwd"],
                 "branch": _git_branch_for_cwd(_sessions[sid]["cwd"]),
+                "project": _project_info_for_cwd(_sessions[sid]["cwd"]),
                 "lazy": True,
                 "desktop_contract": DESKTOP_BACKEND_CONTRACT,
                 "profile_name": _current_profile_name(),
@@ -4586,6 +4621,7 @@ def _(rid, params: dict) -> dict:
                 "info": {
                     "cwd": cwd,
                     "branch": _git_branch_for_cwd(cwd),
+                    "project": _project_info_for_cwd(cwd),
                     "model": _resolve_model(),
                     "tools": {},
                     "skills": {},
@@ -4708,6 +4744,7 @@ def _(rid, params: dict) -> dict:
         info = {
             "cwd": cwd,
             "branch": _git_branch_for_cwd(cwd),
+            "project": _project_info_for_cwd(cwd),
             "model": resumed_model or _resolve_model(),
             "tools": {},
             "skills": {},
@@ -4875,6 +4912,7 @@ def _(rid, params: dict) -> dict:
     info = _session_info(agent, session) if agent is not None else {
         "cwd": cwd,
         "branch": _git_branch_for_cwd(cwd),
+        "project": _project_info_for_cwd(cwd),
         "lazy": True,
     }
     _emit("session.info", params.get("session_id", ""), info)
@@ -5403,12 +5441,15 @@ def _(rid, params: dict) -> dict:
     usage = _get_usage(agent) if agent is not None else {}
     provider = getattr(agent, "provider", None) or "unknown"
     model = getattr(agent, "model", None) or "(unknown)"
+    project = _project_info_for_cwd(_session_cwd(session))
     lines = [
         "Hermes TUI Status",
         "",
         f"Session ID: {key}",
         f"Path: {display_hermes_home()}",
     ]
+    if project:
+        lines.append(f"Project: {project['name']}")
     title = (meta.get("title") or "").strip()
     if title:
         lines.append(f"Title: {title}")
@@ -8016,7 +8057,14 @@ def _(rid, params: dict) -> dict:
         cfg_terminal = _load_cfg().get("terminal") or {}
         raw = str(params.get("cwd", "") or cfg_terminal.get("cwd", "") or "").strip()
         cwd = _completion_cwd({"cwd": raw} if raw else {})
-        return _ok(rid, {"cwd": cwd, "branch": _git_branch_for_cwd(cwd)})
+        return _ok(
+            rid,
+            {
+                "cwd": cwd,
+                "branch": _git_branch_for_cwd(cwd),
+                "project": _project_info_for_cwd(cwd),
+            },
+        )
     if key == "full":
         return _ok(rid, {"config": _load_cfg()})
     if key == "prompt":
