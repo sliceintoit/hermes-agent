@@ -879,6 +879,7 @@ export function useMessageStream({
         }
       } else if (event.type === 'message.delta') {
         if (sessionId) {
+          setSessionCompacting(sessionId, false)
           appendAssistantDelta(sessionId, coerceGatewayText(payload?.text))
         }
       } else if (event.type === 'thinking.delta') {
@@ -886,12 +887,17 @@ export function useMessageStream({
         // KawaiiSpinner), not real reasoning. The bottom-of-thread loading
         // indicator already covers that UX, so we ignore these events to
         // avoid a duplicative "Thinking" disclosure showing spinner text.
+        if (sessionId) {
+          setSessionCompacting(sessionId, false)
+        }
       } else if (event.type === 'reasoning.delta') {
         if (sessionId) {
+          setSessionCompacting(sessionId, false)
           appendReasoningDelta(sessionId, coerceThinkingText(payload?.text))
         }
       } else if (event.type === 'reasoning.available') {
         if (sessionId) {
+          setSessionCompacting(sessionId, false)
           appendReasoningDelta(sessionId, coerceThinkingText(payload?.text), true)
         }
       } else if (event.type === 'message.complete') {
@@ -926,10 +932,12 @@ export function useMessageStream({
           return
         }
 
+        setSessionCompacting(sessionId, false)
         flushQueuedDeltas(sessionId)
         upsertToolCall(sessionId, toTodoPayload(payload) ?? payload, 'running', event.type)
       } else if (event.type === 'tool.complete') {
         if (sessionId) {
+          setSessionCompacting(sessionId, false)
           flushQueuedDeltas(sessionId)
           upsertToolCall(sessionId, toTodoPayload(payload) ?? payload, 'complete', event.type)
           // A pending clarify blocks the turn, so the first tool.complete after
@@ -1100,6 +1108,8 @@ export function useMessageStream({
         if (sessionId && payload?.kind === 'compacting') {
           setSessionCompacting(sessionId, true)
           compactedTurnRef.current.add(sessionId)
+        } else if (sessionId && payload?.kind === 'ready') {
+          setSessionCompacting(sessionId, false)
         } else if (sessionId && payload?.kind === 'process') {
           // The gateway's notification poller announces background process
           // completions / watch matches here — re-sync the status stack.
