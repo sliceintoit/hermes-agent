@@ -60,6 +60,9 @@ _SESSION_ID: ContextVar = ContextVar("HERMES_SESSION_ID", default=_UNSET)
 # so background-process notifications stay inside the originating Telegram
 # private-chat topic (those lanes route only with thread id + reply anchor).
 _SESSION_MESSAGE_ID: ContextVar = ContextVar("HERMES_SESSION_MESSAGE_ID", default=_UNSET)
+_SESSION_SOURCE: ContextVar = ContextVar("HERMES_SESSION_SOURCE", default=_UNSET)
+_UI_SESSION_ID: ContextVar = ContextVar("HERMES_UI_SESSION_ID", default=_UNSET)
+_SESSION_PROFILE: ContextVar = ContextVar("HERMES_SESSION_PROFILE", default=_UNSET)
 
 # Cron auto-delivery vars — set per-job in run_job() so concurrent jobs
 # don't clobber each other's delivery targets.
@@ -77,6 +80,9 @@ _VAR_MAP = {
     "HERMES_SESSION_KEY": _SESSION_KEY,
     "HERMES_SESSION_ID": _SESSION_ID,
     "HERMES_SESSION_MESSAGE_ID": _SESSION_MESSAGE_ID,
+    "HERMES_SESSION_SOURCE": _SESSION_SOURCE,
+    "HERMES_UI_SESSION_ID": _UI_SESSION_ID,
+    "HERMES_SESSION_PROFILE": _SESSION_PROFILE,
     "HERMES_CRON_AUTO_DELIVER_PLATFORM": _CRON_AUTO_DELIVER_PLATFORM,
     "HERMES_CRON_AUTO_DELIVER_CHAT_ID": _CRON_AUTO_DELIVER_CHAT_ID,
     "HERMES_CRON_AUTO_DELIVER_THREAD_ID": _CRON_AUTO_DELIVER_THREAD_ID,
@@ -109,6 +115,9 @@ def set_session_vars(
     session_id: str = "",
     message_id: str = "",
     cwd: str = "",
+    source: str = "",
+    ui_session_id: str = "",
+    profile: str = "",
 ) -> list:
     """Set all session context variables and return reset tokens.
 
@@ -130,6 +139,9 @@ def set_session_vars(
         _SESSION_KEY.set(session_key),
         _SESSION_ID.set(session_id),
         _SESSION_MESSAGE_ID.set(message_id),
+        _SESSION_SOURCE.set(source),
+        _UI_SESSION_ID.set(ui_session_id),
+        _SESSION_PROFILE.set(profile),
     ]
     try:
         from agent.runtime_cwd import set_session_cwd
@@ -161,6 +173,9 @@ def clear_session_vars(tokens: list) -> None:
         _SESSION_KEY,
         _SESSION_ID,
         _SESSION_MESSAGE_ID,
+        _SESSION_SOURCE,
+        _UI_SESSION_ID,
+        _SESSION_PROFILE,
     ):
         var.set("")
     try:

@@ -1455,7 +1455,14 @@ def _cwd_for_session_key(session_key: str) -> str:
     return ""
 
 
-def _set_session_context(session_key: str, cwd: str | None = None) -> list:
+def _set_session_context(
+    session_key: str,
+    cwd: str | None = None,
+    *,
+    ui_session_id: str = "",
+    profile: str = "",
+    profile_home: str | None = None,
+) -> list:
     try:
         from gateway.session_context import set_session_vars
 
@@ -1464,7 +1471,30 @@ def _set_session_context(session_key: str, cwd: str | None = None) -> list:
         # know the parent workspace pass it explicitly so spawned agents inherit
         # it instead of falling back to the gateway launch dir.
         resolved = cwd if cwd is not None else _cwd_for_session_key(session_key)
-        return set_session_vars(session_key=session_key, cwd=resolved)
+        resolved_profile = str(profile or "").strip()
+        with _sessions_lock:
+            for candidate_sid, candidate in list(_sessions.items()):
+                if candidate.get("session_key") == session_key or (
+                    ui_session_id and candidate_sid == ui_session_id
+                ):
+                    if not resolved_profile:
+                        resolved_profile = str(candidate.get("profile") or "").strip()
+                    if profile_home is None:
+                        profile_home = candidate.get("profile_home")
+                    break
+        if not resolved_profile and profile_home:
+            parts = Path(str(profile_home)).parts
+            if "profiles" in parts:
+                idx = parts.index("profiles")
+                if idx + 1 < len(parts):
+                    resolved_profile = parts[idx + 1]
+        return set_session_vars(
+            session_key=session_key,
+            cwd=resolved,
+            source="desktop",
+            ui_session_id=ui_session_id,
+            profile=resolved_profile,
+        )
     except Exception:
         return []
 
@@ -4290,6 +4320,7 @@ def _(rid, params: dict) -> dict:
             "create_reasoning_override": create_reasoning_override,
             "create_service_tier_override": create_service_tier_override,
             "pending_title": title or None,
+            "profile": profile,
             "profile_home": str(profile_home) if profile_home is not None else None,
             "running": False,
             "session_key": key,
@@ -4600,6 +4631,7 @@ def _(rid, params: dict) -> dict:
                     "last_active": now,
                     "lazy": True,
                     "pending_title": None,
+                    "profile": profile,
                     "profile_home": str(profile_home) if profile_home is not None else None,
                     "resume_session_id": target,
                     "running": False,
@@ -4710,6 +4742,7 @@ def _(rid, params: dict) -> dict:
                     "last_active": now,
                     "model_override": stored_runtime_overrides.get("model_override"),
                     "pending_title": None,
+                    "profile": profile,
                     "profile_home": str(profile_home) if profile_home is not None else None,
                     "resume_session_id": target,
                     "resume_runtime_overrides": stored_runtime_overrides or None,
@@ -6102,33 +6135,123 @@ def _(rid, params: dict) -> dict:
     return _ok(rid, {"status": "streaming"})
 
 
-def _notification_event_belongs_elsewhere(session: dict, evt: dict) -> bool:
-    """True if ``evt`` is owned by a *different* live session.
+def _session_profile_identity(session: dict) -> tuple[str, str]:
+    profile = str(session.get("profile") or "").strip()
+    home = str(session.get("profile_home") or "").strip()
+    if not profile and home:
+        parts = Path(home).parts
+        if "profiles" in parts:
+            idx = parts.index("profiles")
+            if idx + 1 < len(parts):
+                profile = parts[idx + 1]
+    return profile, home
 
-    Background-process events carry the ``session_key`` of the session that
-    started the process. Since all desktop sessions share one process-wide
-    completion queue, each poller must skip events it doesn't own so a
-    background job's completion surfaces in the session that launched it — not
-    whichever poller happened to dequeue first. Orphaned events (owner gone)
-    and global/system events (empty ``session_key``) return False so the
-    current poller still handles them rather than losing them.
-    """
+
+def _event_profile_matches_session(session: dict, evt: dict) -> bool:
+    """Return False when a completion is stamped for another profile."""
+    evt_profile = str(evt.get("origin_profile") or "").strip()
+    evt_home = str(evt.get("origin_hermes_home") or "").strip()
+    if not evt_profile and not evt_home:
+        return True
+
+    session_profile, session_home = _session_profile_identity(session)
+    if evt_profile and session_profile and evt_profile != session_profile:
+        return False
+    if evt_home and session_home:
+        try:
+            if Path(evt_home).resolve() != Path(session_home).resolve():
+                return False
+        except Exception:
+            if evt_home.rstrip("/") != session_home.rstrip("/"):
+                return False
+    if session_profile or session_home:
+        return True
+
+    # The launch/default profile has no explicit profile_home on its session.
+    # Only let it claim an event stamped with the launch Hermes home.
+    if evt_home:
+        try:
+            return Path(evt_home).resolve() == Path(get_hermes_home()).resolve()
+        except Exception:
+            return evt_home.rstrip("/") == str(get_hermes_home()).rstrip("/")
+    return not evt_profile
+
+
+def _session_owns_notification_event(sid: str, session: dict, evt: dict) -> bool:
+    """True only when this live session provably owns an async completion."""
+    if session.get("_finalized") or not _event_profile_matches_session(session, evt):
+        return False
+
+    origin_ui_session_id = str(evt.get("origin_ui_session_id") or "")
+    if origin_ui_session_id:
+        # A stamped UI id is the exact return address. Never let a matching or
+        # stale session_key override it and leak the payload into another tab.
+        return origin_ui_session_id == str(sid or "")
+
     evt_key = str(evt.get("session_key") or "")
     if not evt_key:
         return False
-    if evt_key == str(session.get("session_key") or ""):
-        return False
+    current_keys = {
+        str(session.get("session_key") or ""),
+        str(getattr(session.get("agent"), "session_id", "") or ""),
+    }
+    if evt_key in current_keys:
+        return True
+    try:
+        db = _get_db()
+        resolved_key = (
+            db.resolve_resume_session_id(evt_key) if db is not None else evt_key
+        ) or evt_key
+    except Exception:
+        resolved_key = evt_key
+    return resolved_key in current_keys
+
+
+def _notification_event_belongs_elsewhere(
+    sid_or_session, session_or_evt: dict, evt: dict | None = None
+) -> bool:
+    """True if a different live session provably owns ``evt``.
+
+    Accepts both ``(sid, session, evt)`` and the older ``(session, evt)`` form
+    retained by existing callers and tests.
+    """
+    if evt is None:
+        session = sid_or_session
+        evt = session_or_evt
+        try:
+            with _sessions_lock:
+                sid = next(
+                    (key for key, value in _sessions.items() if value is session),
+                    "",
+                )
+        except Exception:
+            sid = ""
+    else:
+        sid = str(sid_or_session or "")
+        session = session_or_evt
+
     try:
         with _sessions_lock:
-            snapshot = list(_sessions.values())
+            snapshot = list(_sessions.items())
     except Exception:
-        # If we can't safely enumerate live sessions, fail open so we don't
-        # crash the poller thread or drop the event.
-        return False
+        # Conversation payloads fail closed if ownership cannot be checked.
+        return evt.get("type") == "async_delegation"
 
+    if evt.get("type") == "async_delegation":
+        return any(
+            other_sid != sid
+            and other_session is not session
+            and _session_owns_notification_event(other_sid, other_session, evt)
+            for other_sid, other_session in snapshot
+        )
+
+    evt_key = str(evt.get("session_key") or "")
+    if not evt_key or evt_key == str(session.get("session_key") or ""):
+        return False
     return any(
-        s is not session and str(s.get("session_key") or "") == evt_key
-        for s in snapshot
+        other_session is not session
+        and str(other_session.get("session_key") or "") == evt_key
+        for _, other_session in snapshot
     )
 
 
@@ -6197,9 +6320,16 @@ def _notification_poller_loop(
         # process started in session A would surface its completion in whichever
         # session's poller happened to wake first (Ben's "reported in a
         # different session" bug). Leave foreign events for their owner.
-        if _notification_event_belongs_elsewhere(session, evt):
+        if _notification_event_belongs_elsewhere(sid, session, evt):
             process_registry.completion_queue.put(evt)
             time.sleep(0.1)
+            continue
+        if (
+            evt.get("type") == "async_delegation"
+            and not _session_owns_notification_event(sid, session, evt)
+        ):
+            # An orphaned or foreign conversation payload must not be adopted
+            # by whichever idle poller happened to dequeue it.
             continue
 
         _evt_sid = evt.get("session_id", "")
@@ -6247,8 +6377,13 @@ def _notification_poller_loop(
             evt = process_registry.completion_queue.get_nowait()
         except Exception:
             break
-        if _notification_event_belongs_elsewhere(session, evt):
+        if _notification_event_belongs_elsewhere(sid, session, evt):
             deferred.append(evt)
+            continue
+        if (
+            evt.get("type") == "async_delegation"
+            and not _session_owns_notification_event(sid, session, evt)
+        ):
             continue
         _evt_sid = evt.get("session_id", "")
         if evt.get("type") == "completion" and process_registry.is_completion_consumed(_evt_sid):
@@ -6321,10 +6456,24 @@ def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:
             )
 
             approval_token = set_current_session_key(session["session_key"])
-            session_tokens = _set_session_context(session["session_key"])
             _profile_home_str = session.get("profile_home")
+            session_tokens = _set_session_context(
+                session["session_key"],
+                ui_session_id=sid,
+                profile=str(session.get("profile") or ""),
+                profile_home=_profile_home_str,
+            )
             if _profile_home_str:
                 home_token = set_hermes_home_override(_profile_home_str)
+            # Stamp the exact Desktop return address on the parent agent. The
+            # async worker loses turn ContextVars, so this is the durable source
+            # used by delegate_task before it dispatches detached work.
+            try:
+                agent._hermes_ui_session_id = str(sid or "")
+                agent._hermes_session_profile = str(session.get("profile") or "")
+                agent._hermes_home = str(_profile_home_str or get_hermes_home())
+            except Exception:
+                pass
             # The sudo password callback is thread-local (tools.terminal_tool
             # _callback_tls), so wiring it on the build thread doesn't reach this
             # turn thread — terminal sudo prompts would fall through to /dev/tty

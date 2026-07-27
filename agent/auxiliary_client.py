@@ -975,7 +975,41 @@ class _AsyncCodexCompletionsAdapter:
 
     async def create(self, **kwargs) -> Any:
         import asyncio
-        return await asyncio.to_thread(self._sync.create, **kwargs)
+
+        worker = asyncio.create_task(asyncio.to_thread(self._sync.create, **kwargs))
+        timeout = kwargs.get("timeout")
+        total_timeout = (
+            float(timeout)
+            if isinstance(timeout, (int, float)) and timeout > 0
+            else None
+        )
+        if total_timeout is None:
+            return await worker
+
+        try:
+            # The sync adapter has its own timer that closes the underlying
+            # client, but a blocked httpx/OpenAI worker thread does not always
+            # unwind when another thread closes that client. Enforce the same
+            # wall-clock deadline from the event loop so async callers are not
+            # held for another socket-read interval (observed as ~2x timeout).
+            return await asyncio.wait_for(asyncio.shield(worker), total_timeout)
+        except asyncio.TimeoutError as exc:
+            # asyncio cannot cancel the running worker thread. Let the sync
+            # adapter's timer finish cleanup and consume its eventual result so
+            # the event loop does not report an un-retrieved task exception.
+            def _consume_worker_result(done: "asyncio.Task[Any]") -> None:
+                if done.cancelled():
+                    return
+                try:
+                    done.exception()
+                except Exception:
+                    pass
+
+            worker.add_done_callback(_consume_worker_result)
+            raise TimeoutError(
+                f"Codex auxiliary Responses stream exceeded "
+                f"{total_timeout:.1f}s total timeout"
+            ) from exc
 
 
 class _AsyncCodexChatShim:
@@ -4626,7 +4660,10 @@ def auxiliary_max_tokens_param(value: int, *, model: Optional[str] = None) -> di
 # Every auxiliary LLM consumer should use these instead of manually
 # constructing clients and calling .chat.completions.create().
 
-# Client cache: (provider, async_mode, base_url, api_key, api_mode, runtime_key) -> (client, default_model, loop)
+# Client cache: provider connection config + model-selection mode ->
+# (client, default_model, loop). Automatic and explicit model selection must not
+# collide, or a stale explicit model can survive a live config change back to
+# provider defaults. Different explicit models may still share one transport.
 # NOTE: loop identity is NOT part of the key.  On async cache hits we check
 # whether the cached loop is the *current* loop; if not, the stale entry is
 # replaced in-place.  This bounds cache growth to one entry per unique
@@ -4641,6 +4678,7 @@ def _client_cache_key(
     provider: str,
     *,
     async_mode: bool,
+    model: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     api_mode: Optional[str] = None,
@@ -4655,7 +4693,11 @@ def _client_cache_key(
     # old cache shape because the explicit provider/model tuple is sufficient.
     task_key = (task or "") if provider == "auto" else ""
     pool_hint = _pool_cache_hint(provider, main_runtime=main_runtime)
-    return (provider, async_mode, base_url or "", api_key or "", api_mode or "", runtime_key, is_vision, task_key, pool_hint)
+    model_mode = "explicit" if model else "automatic"
+    return (
+        provider, async_mode, model_mode, base_url or "", api_key or "",
+        api_mode or "", runtime_key, is_vision, task_key, pool_hint,
+    )
 
 
 def _store_cached_client(cache_key: tuple, client: Any, default_model: Optional[str], *, bound_loop: Any = None) -> None:
@@ -4706,6 +4748,7 @@ def _refresh_nous_auxiliary_client(
     cache_key = _client_cache_key(
         cache_provider,
         async_mode=async_mode,
+        model=model,
         base_url=base_url,
         api_key=api_key,
         api_mode=api_mode,
@@ -4881,6 +4924,7 @@ def _get_cached_client(
     cache_key = _client_cache_key(
         provider,
         async_mode=async_mode,
+        model=model,
         base_url=base_url,
         api_key=api_key,
         api_mode=api_mode,
@@ -5493,16 +5537,15 @@ def call_llm(
         except Exception as transient_err:
             if not _is_transient_transport_error(transient_err):
                 raise
-            # Compression is on the critical preflight path: an oversized
-            # session cannot continue until compaction finishes. A same-provider
-            # retry after a full timeout can double the user-visible stall before
-            # fallback; keep cheap fast-blip retries, but fall through on true
-            # timeout so the fallback chain gets a chance immediately.
-            if task == "compression" and _is_timeout_error(transient_err):
+            # Compression is on the critical preflight path and vision has a
+            # comparatively large per-call budget. A same-provider retry after
+            # a full timeout can double the user-visible stall before fallback;
+            # keep cheap fast-blip retries, but fall through on true timeout.
+            if task in {"compression", "vision"} and _is_timeout_error(transient_err):
                 logger.info(
-                    "Auxiliary compression: timeout on the critical path; "
+                    "Auxiliary %s: full-budget timeout; "
                     "skipping same-provider retry and falling back: %s",
-                    transient_err,
+                    task, transient_err,
                 )
                 raise
             logger.info(
@@ -6000,14 +6043,13 @@ async def async_call_llm(
         except Exception as transient_err:
             if not _is_transient_transport_error(transient_err):
                 raise
-            # See call_llm(): compression is on the critical preflight path, so
-            # skip the same-provider retry on full-budget timeouts and let the
-            # fallback chain run immediately.
-            if task == "compression" and _is_timeout_error(transient_err):
+            # See call_llm(): compression and vision full-budget timeouts are
+            # already expensive, so let the fallback chain run immediately.
+            if task in {"compression", "vision"} and _is_timeout_error(transient_err):
                 logger.info(
-                    "Auxiliary compression (async): timeout on the critical "
-                    "path; skipping same-provider retry and falling back: %s",
-                    transient_err,
+                    "Auxiliary %s (async): full-budget timeout; skipping "
+                    "same-provider retry and falling back: %s",
+                    task, transient_err,
                 )
                 raise
             logger.info(

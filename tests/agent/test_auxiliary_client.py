@@ -29,6 +29,7 @@ from agent.auxiliary_client import (
     _resolve_auto,
     _resolve_xai_oauth_for_aux,
     _CodexCompletionsAdapter,
+    _AsyncCodexCompletionsAdapter,
 )
 
 
@@ -36,6 +37,30 @@ def _jwt_with_claims(claims: dict) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').decode().rstrip("=")
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
     return f"{header}.{payload}.sig"
+
+
+class TestAsyncCodexCompletionsAdapterTimeout:
+    def test_enforces_total_timeout_while_sync_worker_unwinds(self):
+        import asyncio
+
+        class SlowSyncAdapter:
+            def create(self, **kwargs):
+                time.sleep(0.2)
+                return {"too_late": True}
+
+        async def run():
+            adapter = _AsyncCodexCompletionsAdapter(SlowSyncAdapter())  # type: ignore[arg-type]
+            started = time.monotonic()
+
+            with pytest.raises(
+                TimeoutError,
+                match=r"Codex auxiliary Responses stream exceeded 0\.0s total timeout",
+            ):
+                await adapter.create(timeout=0.02)
+
+            assert time.monotonic() - started < 0.1
+
+        asyncio.run(run())
 
 
 @pytest.fixture(autouse=True)
@@ -2131,6 +2156,103 @@ class TestTransientTransportRetry:
         assert result == {"fallback": True}
         assert primary.chat.completions.create.await_count == 1
         assert fb_client.chat.completions.create.await_count == 1
+
+    def test_vision_fast_transport_blip_still_retries_same_provider(self):
+        primary = MagicMock()
+        primary.base_url = "https://chatgpt.com/backend-api/codex"
+        primary.chat.completions.create.side_effect = [
+            Exception("peer closed connection without sending complete message body"),
+            {"ok": True},
+        ]
+
+        p1, p2, p3 = self._patches(primary)
+        with (
+            p1, p2, p3,
+            patch(
+                "agent.auxiliary_client.resolve_vision_provider_client",
+                return_value=("openai-codex", primary, "some-model"),
+            ),
+        ):
+            result = call_llm(
+                task="vision", messages=[{"role": "user", "content": "describe image"}]
+            )
+
+        assert result == {"ok": True}
+        assert primary.chat.completions.create.call_count == 2
+
+    def test_vision_timeout_skips_same_provider_retry_and_falls_back(self):
+        primary = MagicMock()
+        primary.base_url = "https://chatgpt.com/backend-api/codex"
+        primary.chat.completions.create.side_effect = TimeoutError(
+            "Codex auxiliary Responses stream exceeded 120.0s total timeout"
+        )
+
+        fb_client = MagicMock()
+        fb_client.base_url = "https://api.openai.com/v1"
+        fb_client.chat.completions.create.return_value = {"fallback": True}
+
+        p1, p2, p3 = self._patches(primary)
+        with (
+            p1, p2, p3,
+            patch(
+                "agent.auxiliary_client.resolve_vision_provider_client",
+                return_value=("openai-codex", primary, "some-model"),
+            ),
+            patch(
+                "agent.auxiliary_client._try_configured_fallback_chain",
+                return_value=(fb_client, "fb-model", "custom:openai"),
+            ),
+        ):
+            result = call_llm(
+                task="vision", messages=[{"role": "user", "content": "describe image"}]
+            )
+
+        assert result == {"fallback": True}
+        assert primary.chat.completions.create.call_count == 1
+        assert fb_client.chat.completions.create.call_count == 1
+
+    def test_async_vision_timeout_skips_same_provider_retry_and_falls_back(self):
+        import asyncio
+
+        async def run():
+            primary = MagicMock()
+            primary.base_url = "https://chatgpt.com/backend-api/codex"
+            primary.chat.completions.create = AsyncMock(
+                side_effect=TimeoutError(
+                    "Codex auxiliary Responses stream exceeded 120.0s total timeout"
+                )
+            )
+
+            fb_client = MagicMock()
+            fb_client.base_url = "https://api.openai.com/v1"
+            fb_client.chat.completions.create = AsyncMock(return_value={"fallback": True})
+
+            p1, p2, p3 = self._patches(primary)
+            with (
+                p1, p2, p3,
+                patch(
+                    "agent.auxiliary_client.resolve_vision_provider_client",
+                    return_value=("openai-codex", primary, "some-model"),
+                ),
+                patch(
+                    "agent.auxiliary_client._try_configured_fallback_chain",
+                    return_value=(fb_client, "fb-model", "custom:openai"),
+                ),
+                patch(
+                    "agent.auxiliary_client._to_async_client",
+                    return_value=(fb_client, "fb-model"),
+                ),
+            ):
+                result = await async_call_llm(
+                    task="vision",
+                    messages=[{"role": "user", "content": "describe image"}],
+                )
+
+            assert result == {"fallback": True}
+            assert primary.chat.completions.create.await_count == 1
+            assert fb_client.chat.completions.create.await_count == 1
+
+        asyncio.run(run())
 
 
 class TestIsConnectionError:

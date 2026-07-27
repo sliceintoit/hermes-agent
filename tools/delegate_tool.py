@@ -2100,6 +2100,63 @@ def _recover_tasks_from_json_string(
     return parsed, None
 
 
+def _capture_async_delegation_route(parent_agent) -> dict:
+    """Capture the exact desktop tab/profile that owns an async completion.
+
+    The completion queue is process-global, while Desktop hosts multiple tabs
+    and profiles in one process. Capture this metadata on the parent turn
+    thread before dispatching work to the daemon executor.
+    """
+    from tools.approval import get_current_session_key
+
+    session_key = get_current_session_key(default="")
+    origin_ui_session_id = str(
+        getattr(parent_agent, "_hermes_ui_session_id", "") or ""
+    )
+    origin_profile = str(
+        getattr(parent_agent, "_hermes_session_profile", "") or ""
+    )
+    origin_hermes_home = str(
+        getattr(parent_agent, "_hermes_home", "") or ""
+    )
+
+    try:
+        from gateway.session_context import get_session_env
+
+        origin_ui_session_id = (
+            origin_ui_session_id
+            or get_session_env("HERMES_UI_SESSION_ID", "")
+        )
+        origin_profile = (
+            origin_profile
+            or get_session_env("HERMES_SESSION_PROFILE", "")
+        )
+    except Exception:
+        pass
+
+    if not origin_hermes_home:
+        try:
+            from hermes_constants import get_hermes_home
+
+            origin_hermes_home = str(get_hermes_home())
+        except Exception:
+            pass
+
+    parent_session_id = str(getattr(parent_agent, "session_id", "") or "")
+    if origin_ui_session_id and parent_session_id:
+        # Desktop/TUI approval keys can lag a compression rotation. The durable
+        # AIAgent session id is the correct lineage key for detached work.
+        session_key = parent_session_id
+
+    return {
+        "session_key": session_key,
+        "parent_session_id": parent_session_id or None,
+        "origin_ui_session_id": origin_ui_session_id,
+        "origin_profile": origin_profile,
+        "origin_hermes_home": origin_hermes_home,
+    }
+
+
 def delegate_task(
     goal: Optional[str] = None,
     context: Optional[str] = None,
@@ -2550,9 +2607,8 @@ def delegate_task(
     # keep chatting, get the combined summaries back together at the end.
     if background:
         from tools.async_delegation import dispatch_async_delegation_batch
-        from tools.approval import get_current_session_key
 
-        _session_key = get_current_session_key(default="")
+        _route = _capture_async_delegation_route(parent_agent)
         _child_agents = [c for (_, _, c) in children]
 
         # Detach every child from the parent's interrupt-propagation list — the
@@ -2590,7 +2646,11 @@ def delegate_task(
             toolsets=toolsets,
             role=top_role,
             model=creds["model"],
-            session_key=_session_key,
+            session_key=_route["session_key"],
+            parent_session_id=_route["parent_session_id"],
+            origin_ui_session_id=_route["origin_ui_session_id"],
+            origin_profile=_route["origin_profile"],
+            origin_hermes_home=_route["origin_hermes_home"],
             runner=_batch_runner,
             interrupt_fn=_batch_interrupt,
             max_async_children=_get_max_async_children(),
