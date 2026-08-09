@@ -141,6 +141,14 @@ HERMES_AGENT_HELP_GUIDANCE = (
     "of truth when the two differ."
 )
 
+CAPABILITY_ESCALATION_GUIDANCE = (
+    "Keep the current capability set unless it is inadequate. Prefer a suitable "
+    "script for one-offs, make repeated workflows into skills, use scoped "
+    "integrations for recurring external work, and reserve native/default tools "
+    "for proven broad reuse. State when a missing capability requires a "
+    "different toolset."
+)
+
 MEMORY_GUIDANCE = (
     "You have persistent memory across sessions. Save durable facts using the memory "
     "tool: user preferences, environment details, tool quirks, and stable conventions. "

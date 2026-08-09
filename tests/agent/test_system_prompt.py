@@ -3,6 +3,9 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
+from agent.prompt_builder import CAPABILITY_ESCALATION_GUIDANCE
 from agent.system_prompt import build_system_prompt_parts
 
 
@@ -65,6 +68,13 @@ def _stable_prompt(agent):
         patch("run_agent.build_context_files_prompt", return_value=""),
     ):
         return build_system_prompt_parts(agent)["stable"]
+
+
+@pytest.mark.parametrize("platform", ["cli", "tui"])
+def test_capability_escalation_guidance_is_stable_for_interactive_surfaces(platform):
+    stable = _stable_prompt(_make_agent(valid_tool_names=["terminal"], platform=platform))
+
+    assert stable.count(CAPABILITY_ESCALATION_GUIDANCE) == 1
 
 
 class TestCodingContextBlock:
