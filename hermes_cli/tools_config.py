@@ -1399,13 +1399,13 @@ def _get_platform_tools(
             default_off.remove(platform)
         # Home Assistant is already runtime-gated by its check_fn (requires
         # HASS_TOKEN to register any tools). When a user has configured
-        # HASS_TOKEN, they've explicitly opted in — don't also strip it via
-        # _DEFAULT_OFF_TOOLSETS, which would silently drop HA from platforms
-        # (e.g. cron) that run through _get_platform_tools without an
-        # explicit saved toolset list. Without this, Norbert's HA cron jobs
-        # regressed after #14798 made cron honor per-platform tool config.
+        # HASS_TOKEN, they've explicitly opted in. The narrow core no longer
+        # carries HA schemas, so add its toolset directly instead of merely
+        # removing it from _DEFAULT_OFF_TOOLSETS. This preserves HA cron jobs
+        # without restoring the schemas to ordinary default sessions.
         if "homeassistant" in default_off and os.getenv("HASS_TOKEN"):
             default_off.remove("homeassistant")
+            enabled_toolsets.add("homeassistant")
         # Symmetric carve-out for x_search auto-enable (see the inject
         # block above). Without this, the default_off subtraction would
         # strip the entry we just added.

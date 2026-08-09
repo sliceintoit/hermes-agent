@@ -2,6 +2,7 @@
 
 from tools.registry import ToolRegistry
 from toolsets import (
+    _HERMES_CORE_TOOLS,
     TOOLSETS,
     get_toolset,
     resolve_toolset,
@@ -60,6 +61,25 @@ class TestResolveToolset:
         assert "terminal" in tools
         assert "web_search" in tools
         assert "web_extract" in tools
+
+    def test_core_toolset_is_the_default_foundation(self):
+        assert set(resolve_toolset("core")) == set(_HERMES_CORE_TOOLS)
+        assert "browser_navigate" not in _HERMES_CORE_TOOLS
+        assert "web_search" not in _HERMES_CORE_TOOLS
+        assert "cronjob" not in _HERMES_CORE_TOOLS
+
+    def test_browser_auth_posture_adds_browser_without_automation_noise(self):
+        tools = set(resolve_toolset("browser_auth"))
+        assert set(_HERMES_CORE_TOOLS).issubset(tools)
+        assert {"browser_navigate", "browser_cdp", "browser_dialog", "vision_analyze"}.issubset(tools)
+        assert "cronjob" not in tools
+        assert "delegate_task" not in tools
+
+    def test_coding_posture_keeps_engineering_tools_without_browser_schema(self):
+        tools = set(resolve_toolset("coding"))
+        assert {"terminal", "read_file", "patch", "web_search", "execute_code", "delegate_task"}.issubset(tools)
+        assert "browser_navigate" not in tools
+        assert "browser_cdp" not in tools
 
     def test_cycle_detection(self):
         # Create a cycle: A includes B, B includes A
@@ -225,9 +245,7 @@ class TestToolsetConsistency:
         core = set.intersection(*tool_sets)
         for name, ts in zip(platforms, tool_sets):
             assert core.issubset(ts), f"{name} is missing core tools: {core - ts}"
-        # Sanity: the shared core must be non-trivial (i.e. we didn't
-        # silently let a platform diverge so far that nothing is shared).
-        assert len(core) > 20, f"Suspiciously small shared core: {len(core)} tools"
+        assert core == set(_HERMES_CORE_TOOLS)
 
 
 class TestPluginToolsets:
@@ -247,9 +265,14 @@ class TestPluginToolsets:
         assert all_toolsets["plugin_bundle"]["tools"] == ["plugin_tool"]
 
 
-class TestDefaultPlatformWebSearchCoverage:
-    def test_hermes_whatsapp_toolset_includes_web_search(self):
-        assert "web_search" in resolve_toolset("hermes-whatsapp")
+class TestDefaultPlatformCoreCoverage:
+    def test_hermes_whatsapp_toolset_excludes_specialized_web_tools(self):
+        tools = resolve_toolset("hermes-whatsapp")
+        assert set(_HERMES_CORE_TOOLS).issubset(tools)
+        assert "web_search" not in tools
+        assert "browser_navigate" not in tools
 
-    def test_hermes_api_server_toolset_includes_web_search(self):
-        assert "web_search" in resolve_toolset("hermes-api-server")
+    def test_hermes_api_server_toolset_excludes_specialized_web_tools(self):
+        tools = resolve_toolset("hermes-api-server")
+        assert set(tools) == set(_HERMES_CORE_TOOLS) - {"clarify"}
+        assert "web_search" not in tools

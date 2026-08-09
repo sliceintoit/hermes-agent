@@ -126,10 +126,11 @@ def test_get_platform_tools_context_engine_respects_explicit_empty_selection():
     assert "context_engine" not in enabled
 
 
-def test_get_platform_tools_default_whatsapp_includes_web():
+def test_get_platform_tools_default_whatsapp_excludes_specialized_web_tools():
     enabled = _get_platform_tools({}, "whatsapp")
 
-    assert "web" in enabled
+    assert "web" not in enabled
+    assert {"terminal", "file", "skills", "todo", "memory", "session_search", "clarify"}.issubset(enabled)
 
 
 def test_get_platform_tools_homeassistant_platform_keeps_homeassistant_toolset():
@@ -233,10 +234,12 @@ def test_get_platform_tools_expands_composite_when_mixed_with_configurable():
 
     enabled = _get_platform_tools(config, "cli", include_default_mcp_servers=False)
 
-    # Native tools must reappear.
-    for ts in ("terminal", "file", "web", "browser", "memory", "delegation",
-               "code_execution", "todo", "session_search", "skills"):
+    # The narrow default core must reappear, while specialized capabilities
+    # stay off until the user enables their toolsets explicitly.
+    for ts in ("terminal", "file", "memory", "todo", "session_search", "skills"):
         assert ts in enabled, f"{ts} should be enabled when hermes-cli is listed"
+    for ts in ("web", "browser", "delegation", "code_execution"):
+        assert ts not in enabled, f"{ts} should stay out of the default core"
     # User explicitly opted into Spotify — must survive _DEFAULT_OFF_TOOLSETS subtraction.
     assert "spotify" in enabled
 

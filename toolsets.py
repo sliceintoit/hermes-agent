@@ -26,29 +26,26 @@ Usage:
 from typing import List, Dict, Any, Set, Optional
 
 
-# Shared tool list for CLI and all messaging platform toolsets.
-# Edit this once to update all platforms simultaneously.
+# Shared, always-visible tool list for CLI and all messaging platform toolsets.
+#
+# This is intentionally the narrow, durable core. Every member is sent to the
+# model on every request for the default platform session, so specialized
+# capabilities belong in opt-in toolsets below rather than here. Keep the list
+# stable for the lifetime of a session; callers select additional toolsets only
+# while creating a fresh session to preserve prompt caching.
+#
+# Edit this once to update all platform defaults simultaneously.
 _HERMES_CORE_TOOLS = [
-    # Web
-    "web_search", "web_extract",
     # Terminal + process management
     "terminal", "process",
-    # Read the desktop GUI's embedded terminal pane (gated on HERMES_DESKTOP
-    # via check_fn in tools/read_terminal_tool.py — hidden outside the GUI).
+    # Read the desktop GUI's embedded terminal pane. Its check_fn keeps the
+    # schema off non-Desktop sessions, while membership here preserves the
+    # terminal toolset's atomic resolution on the Desktop.
     "read_terminal",
     # File manipulation
     "read_file", "write_file", "patch", "search_files",
-    # Vision + image generation
-    "vision_analyze", "image_generate",
     # Skills
     "skills_list", "skill_view", "skill_manage",
-    # Browser automation
-    "browser_navigate", "browser_snapshot", "browser_click",
-    "browser_type", "browser_scroll", "browser_back",
-    "browser_press", "browser_get_images",
-    "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-    # Text-to-speech
-    "text_to_speech",
     # Planning & memory
     "todo", "memory",
     # NOTE: the desktop Project tools (project_list/create/switch) are
@@ -60,22 +57,6 @@ _HERMES_CORE_TOOLS = [
     "session_search",
     # Clarifying questions
     "clarify",
-    # Code execution + delegation
-    "execute_code", "delegate_task",
-    # Cronjob management
-    "cronjob",
-    # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
-    "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
-    # Kanban multi-agent coordination — only in schema when the agent is
-    # spawned as a kanban worker (HERMES_KANBAN_TASK env set) or the current
-    # profile explicitly enables the kanban toolset. Gated via check_fn in
-    # tools/kanban_tools.py.
-    "kanban_show", "kanban_list",
-    "kanban_complete", "kanban_block", "kanban_heartbeat",
-    "kanban_comment", "kanban_create", "kanban_link",
-    "kanban_unblock",
-    # Computer use (macOS, gated on cua-driver being installed via check_fn)
-    "computer_use",
 ]
 
 # Webhook events may originate from untrusted third-party content (for example,
@@ -92,6 +73,12 @@ _HERMES_WEBHOOK_SAFE_TOOLS = [
 # Core toolset definitions
 # These can include individual tools or reference other toolsets
 TOOLSETS = {
+    "core": {
+        "description": "Small, always-visible foundation: files, terminal, durable context, and user coordination",
+        "tools": _HERMES_CORE_TOOLS,
+        "includes": [],
+    },
+
     # Basic toolsets - individual tool categories
     "web": {
         "description": "Web research and content extraction tools",
@@ -336,6 +323,29 @@ TOOLSETS = {
         "tools": ["terminal", "process"],
         "includes": ["web", "file"]  # For searching error messages and solutions, and file operations
     },
+
+    "browser_auth": {
+        "description": "Authenticated browser work: Chromium/CDP, visual verification, web extraction, and local file/terminal follow-up",
+        "tools": [],
+        "includes": ["core", "browser", "web", "vision"],
+        # Session posture: select for a new browser-auth session, never recover
+        # it as a per-platform default in `hermes tools`.
+        "posture": True,
+    },
+
+    "research": {
+        "description": "Research posture: web search/extraction, browser interaction, and visual analysis on top of the core",
+        "tools": [],
+        "includes": ["core", "web", "browser", "vision"],
+        "posture": True,
+    },
+
+    "automation": {
+        "description": "Durable automation posture: scripts, delegation, and scheduled jobs on top of the core",
+        "tools": [],
+        "includes": ["core", "code_execution", "delegation", "cronjob"],
+        "posture": True,
+    },
     
     "safe": {
         "description": "Safe toolkit without terminal access",
@@ -344,26 +354,13 @@ TOOLSETS = {
     },
 
     # Coding posture (base Hermes — CLI/TUI/desktop/ACP). Auto-selected in a
-    # code workspace; see agent/coding_context.py. Keeps everything you reach
-    # for while pairing on code and drops the rest (messaging, tts, image_gen,
-    # spotify, home-assistant, cron, computer-use).
+    # code workspace; see agent/coding_context.py. Browser/CDP and media tools
+    # stay in their own explicit postures so ordinary coding does not carry
+    # their schemas on every request.
     "coding": {
-        "description": "Coding-focused toolset: files, terminal, search, web docs, skills, todo, delegate, vision, browser",
-        "tools": [
-            "web_search", "web_extract",
-            "terminal", "process", "read_terminal",
-            "read_file", "write_file", "patch", "search_files",
-            "vision_analyze",
-            "skills_list", "skill_view", "skill_manage",
-            "browser_navigate", "browser_snapshot", "browser_click",
-            "browser_type", "browser_scroll", "browser_back",
-            "browser_press", "browser_get_images",
-            "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-            "todo", "memory",
-            "session_search", "clarify",
-            "execute_code", "delegate_task",
-        ],
-        "includes": [],
+        "description": "Coding-focused toolset: core engineering tools, web documentation, sandbox scripts, and delegation",
+        "tools": [],
+        "includes": ["core", "web", "code_execution", "delegation"],
         # Posture toolset: selected per-session by agent/coding_context.py,
         # never auto-recovered into per-platform tool config (see the
         # non-configurable-toolset recovery loop in hermes_cli/tools_config.py).
@@ -399,40 +396,13 @@ TOOLSETS = {
     },
 
     "hermes-api-server": {
-        "description": "OpenAI-compatible API server — full agent tools accessible via HTTP (no interactive UI tools like clarify or send_message)",
-        "tools": [
-            # Web
-            "web_search", "web_extract",
-            # Terminal + process management
-            "terminal", "process",
-            # File manipulation
-            "read_file", "write_file", "patch", "search_files",
-            # Vision + image generation
-            "vision_analyze", "image_generate",
-            # Skills
-            "skills_list", "skill_view", "skill_manage",
-            # Browser automation
-            "browser_navigate", "browser_snapshot", "browser_click",
-            "browser_type", "browser_scroll", "browser_back",
-            "browser_press", "browser_get_images",
-            "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-            # Planning & memory
-            "todo", "memory",
-            # Session history search
-            "session_search",
-            # Code execution + delegation
-            "execute_code", "delegate_task",
-            # Cronjob management
-            "cronjob",
-            # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
-            "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
-
-        ],
+        "description": "OpenAI-compatible API server — narrow core tools accessible via HTTP (no interactive UI tools like clarify or send_message)",
+        "tools": [tool for tool in _HERMES_CORE_TOOLS if tool != "clarify"],
         "includes": []
     },
     
     "hermes-cli": {
-        "description": "Full interactive CLI toolset - all default tools plus cronjob management",
+        "description": "Default CLI toolset — narrow core; add specialized toolsets per fresh session",
         "tools": _HERMES_CORE_TOOLS,
         "includes": []
     },
@@ -444,7 +414,13 @@ TOOLSETS = {
         # homeassistant) are excluded by _get_platform_tools() unless
         # the user explicitly enables them.
         "description": "Default cron toolset - same core tools as hermes-cli; gated by `hermes tools`",
-        "tools": _HERMES_CORE_TOOLS,
+        # Keep Home Assistant in this platform universe, but let
+        # _DEFAULT_OFF_TOOLSETS + its check_fn hide it unless HASS_TOKEN is
+        # configured. This preserves existing HA cron jobs without putting its
+        # schemas in ordinary default sessions.
+        "tools": _HERMES_CORE_TOOLS + [
+            "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+        ],
         "includes": []
     },
 
@@ -489,7 +465,9 @@ TOOLSETS = {
 
     "hermes-homeassistant": {
         "description": "Home Assistant bot toolset - smart home event monitoring and control",
-        "tools": _HERMES_CORE_TOOLS,
+        "tools": _HERMES_CORE_TOOLS + [
+            "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+        ],
         "includes": []
     },
 
