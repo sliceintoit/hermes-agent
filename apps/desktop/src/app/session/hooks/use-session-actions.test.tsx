@@ -10,7 +10,9 @@ import { $activeGatewayProfile, $newChatProfile } from '@/store/profile'
 import {
   $activeSessionId,
   $currentCwd,
+  $currentWorkMode,
   $messages,
+  $newChatWorkMode,
   $resumeFailedSessionId,
   $selectedStoredSessionId,
   setActiveSessionId,
@@ -86,14 +88,17 @@ function Harness({
   return null
 }
 
-async function createWith(profileSetup: () => void): Promise<Record<string, unknown> | undefined> {
+async function createWith(
+  profileSetup: () => void,
+  runtimeInfo?: Record<string, unknown>
+): Promise<Record<string, unknown> | undefined> {
   let createParams: Record<string, unknown> | undefined
 
   const requestGateway = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'session.create') {
       createParams = params
 
-      return { session_id: RUNTIME_SESSION_ID, stored_session_id: null } as never
+      return { info: runtimeInfo, session_id: RUNTIME_SESSION_ID, stored_session_id: null } as never
     }
 
     return {} as never
@@ -115,6 +120,8 @@ describe('createBackendSessionForSend profile routing', () => {
     cleanup()
     $newChatProfile.set(null)
     $activeGatewayProfile.set('default')
+    $currentWorkMode.set(null)
+    $newChatWorkMode.set('everyday')
     vi.restoreAllMocks()
   })
 
@@ -147,6 +154,25 @@ describe('createBackendSessionForSend profile routing', () => {
     })
 
     expect(params).toMatchObject({ profile: 'default' })
+  })
+
+  it('creates the session with the selected work mode', async () => {
+    const params = await createWith(() => {
+      $newChatWorkMode.set('build_websites')
+    })
+
+    expect(params).toMatchObject({ work_mode: 'build_websites' })
+  })
+
+  it('reflects the mode returned for the newly created runtime session', async () => {
+    await createWith(
+      () => {
+        $newChatWorkMode.set('search_read')
+      },
+      { work_mode: 'search_read' }
+    )
+
+    expect($currentWorkMode.get()).toBe('search_read')
   })
 })
 
@@ -200,6 +226,7 @@ describe('resumeSession failure recovery', () => {
     setActiveSessionId(null)
     $selectedStoredSessionId.set(null)
     setResumeFailedSessionId(null)
+    $currentWorkMode.set(null)
     setMessages([])
     setSessions([])
     vi.restoreAllMocks()
@@ -266,6 +293,27 @@ describe('resumeSession failure recovery', () => {
     expect($resumeFailedSessionId.get()).toBeNull()
     // The fallback transcript is visible.
     expect($messages.get().length).toBeGreaterThan(0)
+  })
+
+  it('restores the mode reported for a resumed session', async () => {
+    const requestGateway = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'session.resume') {
+        return {
+          info: { work_mode: 'automate' },
+          messages: [],
+          resumed: params?.session_id,
+          session_id: 'runtime-1'
+        } as never
+      }
+
+      return {} as never
+    })
+
+    vi.mocked(getSessionMessages).mockResolvedValue({ messages: [] } as never)
+
+    await runResume(requestGateway)
+
+    expect($currentWorkMode.get()).toBe('automate')
   })
 
   it('does NOT throw out of the fallback when REST also fails (no unhandled rejection)', async () => {
@@ -442,6 +490,7 @@ describe('resumeSession failure recovery', () => {
             storedSessionId: 'stored-1',
             streamId: null,
             turnStartedAt: null,
+            workMode: null,
             yolo: false
           }
         ]

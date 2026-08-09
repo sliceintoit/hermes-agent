@@ -1024,9 +1024,11 @@ def _start_agent_build(sid: str, session: dict) -> None:
                 # Lazy-resumed (watch) sessions carry the stored conversation
                 # id — pass it through so the upgrade continues that session
                 # instead of starting a fresh one under the same key.
-                kw = {"session_db": session_db}
+                kw: dict[str, Any] = {"session_db": session_db}
                 if resume_sid := current.get("resume_session_id"):
                     kw["session_id"] = resume_sid
+                if work_mode := current.get("work_mode"):
+                    kw["work_mode"] = work_mode
                 resume_overrides = current.get("resume_runtime_overrides")
                 if isinstance(resume_overrides, dict) and resume_overrides:
                     # Cold deferred resume: restore the full persisted runtime
@@ -1312,6 +1314,13 @@ def _ensure_session_db_row(session: dict) -> None:
         model_config["reasoning_config"] = reasoning
     if tier := session.get("create_service_tier_override"):
         model_config["service_tier"] = tier
+    # Work mode is session identity, like the model picker above. Persist it in
+    # the established metadata JSON so resume recreates the same tool schemas
+    # rather than silently inheriting whatever the Desktop default becomes.
+    from tui_gateway.work_modes import SESSION_WORK_MODE_KEY, selected_work_mode
+
+    if work_mode := selected_work_mode(session.get("work_mode")):
+        model_config[SESSION_WORK_MODE_KEY] = work_mode
     try:
         db.create_session(
             key,
@@ -1717,6 +1726,13 @@ def _stored_session_runtime_overrides(row: dict | None) -> dict:
         overrides["reasoning_config_override"] = reasoning_config
     if service_tier:
         overrides["service_tier_override"] = service_tier
+    # Legacy conversations intentionally have no work-mode override: they keep
+    # their existing configured-toolset resume behavior. All new selector-built
+    # conversations store this key on their first submitted prompt.
+    from tui_gateway.work_modes import SESSION_WORK_MODE_KEY, selected_work_mode
+
+    if work_mode := selected_work_mode(model_config.get(SESSION_WORK_MODE_KEY)):
+        overrides["work_mode"] = work_mode
 
     return overrides
 
@@ -1991,7 +2007,17 @@ def _load_tool_progress_mode() -> str:
     return mode if mode in {"off", "new", "all", "verbose"} else "all"
 
 
-def _load_enabled_toolsets() -> list[str] | None:
+def _load_enabled_toolsets(work_mode: str | None = None) -> list[str] | None:
+    """Resolve the fixed toolsets for a Desktop work mode when one was chosen."""
+    if work_mode:
+        from tui_gateway.work_modes import toolsets_for_work_mode
+
+        if selected := toolsets_for_work_mode(work_mode):
+            # Project tooling is Desktop-only and deliberately outside the core
+            # tool list. Include it for every named mode, matching the existing
+            # GUI resolver below without expanding other agent surfaces.
+            return sorted({*selected, "project"})
+
     explicit = [
         item.strip()
         for item in os.environ.get("HERMES_TUI_TOOLSETS", "").split(",")
@@ -2736,6 +2762,7 @@ def _session_info(agent, session: dict | None = None) -> dict:
         "update_command": "",
         "usage": _get_usage(agent),
         "profile_name": _current_profile_name(),
+        "work_mode": (session or {}).get("work_mode"),
     }
     try:
         from hermes_cli import __version__, __release_date__
@@ -3673,6 +3700,7 @@ def _make_agent(
     provider_override: str | None = None,
     reasoning_config_override: dict | None = None,
     service_tier_override: str | None = None,
+    work_mode: str | None = None,
 ):
     from run_agent import AIAgent
     from hermes_cli.runtime_provider import resolve_runtime_provider
@@ -3793,7 +3821,9 @@ def _make_agent(
             if service_tier_override is not None
             else _load_service_tier()
         ),
-        enabled_toolsets=_load_enabled_toolsets(),
+        enabled_toolsets=(
+            _load_enabled_toolsets(work_mode) if work_mode else _load_enabled_toolsets()
+        ),
         # OpenRouter provider-routing prefs (config.yaml `provider_routing`).
         # Mirrors the messaging gateway + CLI so the desktop/TUI honors the same
         # routing instead of letting OpenRouter pick providers at random.
@@ -3824,6 +3854,7 @@ def _init_session(
     cols: int = 80,
     cwd: str | None = None,
     session_db=None,
+    work_mode: str | None = None,
 ):
     now = time.time()
     with _sessions_lock:
@@ -3846,6 +3877,7 @@ def _init_session(
             "tool_progress_mode": _load_tool_progress_mode(),
             "edit_snapshots": {},
             "tool_started_at": {},
+            "work_mode": work_mode,
             # Per-session model override set by an in-session /model switch.
             # Honored on rebuild (/new, resume) so a switch in THIS session
             # never leaks into siblings via process-global env vars.
@@ -4244,6 +4276,13 @@ def _inflight_snapshot(session: dict) -> dict | None:
 
 @method("session.create")
 def _(rid, params: dict) -> dict:
+    from tui_gateway.work_modes import DEFAULT_WORK_MODE, selected_work_mode
+
+    raw_work_mode = params.get("work_mode", DEFAULT_WORK_MODE)
+    work_mode = selected_work_mode(raw_work_mode)
+    if work_mode is None:
+        return _err(rid, 4008, f"unknown work mode: {raw_work_mode!r}")
+
     sid = uuid.uuid4().hex[:8]
     key = _new_session_key()
     cols = int(params.get("cols", 80))
@@ -4329,6 +4368,7 @@ def _(rid, params: dict) -> dict:
             "tool_progress_mode": _load_tool_progress_mode(),
             "tool_started_at": {},
             "transport": current_transport() or _stdio_transport,
+            "work_mode": work_mode,
         }
         _register_session_cwd(_sessions[sid])
     # NOTE: we intentionally do NOT persist a DB row here. Every TUI/desktop
@@ -4383,6 +4423,7 @@ def _(rid, params: dict) -> dict:
                 "lazy": True,
                 "desktop_contract": DESKTOP_BACKEND_CONTRACT,
                 "profile_name": _current_profile_name(),
+                "work_mode": work_mode,
             },
         },
     )
@@ -4547,6 +4588,10 @@ def _(rid, params: dict) -> dict:
     profile_resume_cwd = str(found.get("cwd") or "").strip() or _profile_configured_cwd(
         profile_home
     )
+    # A persisted work mode is part of a conversation's runtime identity. Keep
+    # one parsed override through every eager, deferred, and lazy resume path.
+    stored_runtime_overrides = _stored_session_runtime_overrides(found) or {}
+    stored_work_mode = stored_runtime_overrides.get("work_mode")
 
     def _reuse_live_payload(sid: str, session: dict) -> dict:
         payload = _live_session_payload(
@@ -4630,10 +4675,12 @@ def _(rid, params: dict) -> dict:
                     "inflight_turn": None,
                     "last_active": now,
                     "lazy": True,
+                    "work_mode": stored_work_mode,
                     "pending_title": None,
                     "profile": profile,
                     "profile_home": str(profile_home) if profile_home is not None else None,
                     "resume_session_id": target,
+                    "resume_runtime_overrides": stored_runtime_overrides or None,
                     "running": False,
                     "session_key": target,
                     "show_reasoning": _load_show_reasoning(),
@@ -4660,6 +4707,7 @@ def _(rid, params: dict) -> dict:
                     "lazy": True,
                     "desktop_contract": DESKTOP_BACKEND_CONTRACT,
                     "profile_name": _current_profile_name(),
+                    "work_mode": stored_work_mode,
                 },
                 "inflight": None,
                 "running": child_running,
@@ -4708,7 +4756,6 @@ def _(rid, params: dict) -> dict:
         # the deferred build (and the immediate info payload) match the eager
         # path — without these a deferred build drops the provider and resume
         # fails with "No LLM provider configured".
-        stored_runtime_overrides = _stored_session_runtime_overrides(found) or {}
         cwd = profile_resume_cwd or os.getenv("TERMINAL_CWD", os.getcwd())
         now = time.time()
         source = str(params.get("source") or "tui").strip() or "tui"
@@ -4741,6 +4788,7 @@ def _(rid, params: dict) -> dict:
                     "inflight_turn": None,
                     "last_active": now,
                     "model_override": stored_runtime_overrides.get("model_override"),
+                    "work_mode": stored_work_mode,
                     "pending_title": None,
                     "profile": profile,
                     "profile_home": str(profile_home) if profile_home is not None else None,
@@ -4784,6 +4832,7 @@ def _(rid, params: dict) -> dict:
             "lazy": True,
             "desktop_contract": DESKTOP_BACKEND_CONTRACT,
             "profile_name": _current_profile_name(),
+            "work_mode": stored_work_mode,
         }
         provider_override = stored_runtime_overrides.get("provider_override")
         if provider_override:
@@ -4889,6 +4938,7 @@ def _(rid, params: dict) -> dict:
                     cols=cols,
                     cwd=profile_resume_cwd,
                     session_db=db,
+                    work_mode=stored_work_mode,
                 )
             finally:
                 if init_home_token is not None:
@@ -5037,6 +5087,7 @@ def _fallback_session_info(session: dict) -> dict:
         "model": _resolve_model(),
         "skills": {},
         "tools": {},
+        "work_mode": session.get("work_mode"),
     }
 
 

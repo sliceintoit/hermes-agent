@@ -2,6 +2,7 @@ import type { MouseTrackingMode, ScrollBoxHandle } from '@hermes/ink'
 import type { MutableRefObject, ReactNode, RefObject, SetStateAction } from 'react'
 
 import type { PasteEvent } from '../components/textInput.js'
+import type { WorkMode } from '../domain/workModes.js'
 import type { GatewayClient } from '../gatewayClient.js'
 import type { ImageAttachResponse, SessionCloseResponse } from '../gatewayTypes.js'
 import type { ParsedVoiceRecordKey } from '../lib/platform.js'
@@ -338,8 +339,8 @@ export interface AppLayoutActions {
   clearSelection: () => void
   activateLiveSession: (id: string) => void
   closeLiveSession: (id: string) => Promise<null | SessionCloseResponse>
-  newLiveSession: () => void
-  newPromptSession: (prompt: string, modelArg?: string) => void
+  newLiveSession: (workMode?: WorkMode) => void
+  newPromptSession: (prompt: string, modelArg?: string, workMode?: WorkMode) => void
   onModelSelect: (value: string) => void
   resumeById: (id: string) => void
   setStickyPrompt: (value: string) => void
@@ -402,8 +403,8 @@ export interface AppOverlaysProps {
   onActiveSessionSelect: (sessionId: string) => void
   onActiveSessionClose: (sessionId: string) => Promise<null | SessionCloseResponse>
   onModelSelect: (value: string) => void
-  onNewLiveSession: () => void
-  onNewPromptSession: (prompt: string, modelArg?: string) => void
+  onNewLiveSession: (workMode?: WorkMode) => void
+  onNewPromptSession: (prompt: string, modelArg?: string, workMode?: WorkMode) => void
   onResumeSelect: (sessionId: string) => void
   onSecretSubmit: (value: string) => void
   onSudoSubmit: (pw: string) => void

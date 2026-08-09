@@ -8,6 +8,7 @@ import { hasLeadGap, prevRenderedMsg } from '../domain/blockLayout.js'
 import { SECTION_NAMES, sectionMode } from '../domain/details.js'
 import { attachedImageNotice, imageTokenMeta } from '../domain/messages.js'
 import { composeTabTitle, fmtProjectCwdBranch, shortCwd } from '../domain/paths.js'
+import type { WorkMode } from '../domain/workModes.js'
 import { type GatewayClient } from '../gatewayClient.js'
 import type {
   ClarifyRespondResponse,
@@ -79,11 +80,12 @@ export interface PromptLiveSessionOptions {
   dispatchSubmission: (full: string) => void
   maybeWarn: (value: unknown) => void
   modelArg?: string
-  newLiveSession: (msg?: string, title?: string) => Promise<null | string> | null | string | void
+  newLiveSession: (msg?: string, title?: string, workMode?: WorkMode) => Promise<null | string> | null | string | void
   onModelSwitched?: (value: string, result: ConfigSetResponse) => void
   prompt: string
   rpc: GatewayRpc
   sys: (text: string) => void
+  workMode?: WorkMode
 }
 
 export async function startPromptLiveSession({
@@ -94,7 +96,8 @@ export async function startPromptLiveSession({
   onModelSwitched,
   prompt,
   rpc,
-  sys
+  sys,
+  workMode
 }: PromptLiveSessionOptions) {
   const trimmed = prompt.trim()
 
@@ -106,7 +109,7 @@ export async function startPromptLiveSession({
   // the initial title. Auto-title generation can rename it after the first
   // response; pre-queuing prompt text here causes duplicate-title errors when
   // users dispatch common prompts like "Hello, what model are you?".
-  const sid = (await newLiveSession('new live session started')) ?? null
+  const sid = (await newLiveSession('new live session started', undefined, workMode)) ?? null
 
   if (!sid) {
     sys('error: failed to start new live session')
@@ -950,7 +953,7 @@ export function useMainApp(gw: GatewayClient) {
   )
 
   const newPromptSession = useCallback(
-    (prompt: string, modelArg?: string) => {
+    (prompt: string, modelArg?: string, workMode?: WorkMode) => {
       void startPromptLiveSession({
         dispatchSubmission,
         maybeWarn,
@@ -963,7 +966,8 @@ export function useMainApp(gw: GatewayClient) {
           })),
         prompt,
         rpc,
-        sys
+        sys,
+        workMode
       })
     },
     [dispatchSubmission, maybeWarn, rpc, session.newLiveSession, sys]
@@ -1029,7 +1033,7 @@ export function useMainApp(gw: GatewayClient) {
       answerSecret,
       answerSudo,
       clearSelection,
-      newLiveSession: () => session.newLiveSession(),
+      newLiveSession: (workMode?: WorkMode) => session.newLiveSession(undefined, undefined, workMode),
       newPromptSession,
       onModelSelect,
       // Resuming a cold session from the overlay CLOSES the current one, so it

@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n'
 import { type ChatMessage, chatMessageText, preserveLocalAssistantErrors, toChatMessages } from '@/lib/chat-messages'
 import { normalizePersonalityValue } from '@/lib/chat-runtime'
 import { embeddedImageUrls, textWithoutEmbeddedImages } from '@/lib/embedded-images'
+import { isDesktopWorkMode } from '@/lib/work-modes'
 import { setSessionYolo } from '@/lib/yolo-session'
 import { clearQueuedPrompts } from '@/store/composer-queue'
 import { $pinnedSessionIds } from '@/store/layout'
@@ -20,6 +21,7 @@ import {
   $currentProvider,
   $currentReasoningEffort,
   $messages,
+  $newChatWorkMode,
   $sessions,
   $yoloActive,
   sessionPinId,
@@ -28,17 +30,19 @@ import {
   setBusy,
   setCurrentBranch,
   setCurrentCwd,
-  setCurrentProject,
   setCurrentFastMode,
   setCurrentModel,
   setCurrentPersonality,
+  setCurrentProject,
   setCurrentProvider,
   setCurrentReasoningEffort,
   setCurrentServiceTier,
   setCurrentUsage,
+  setCurrentWorkMode,
   setFreshDraftReady,
   setIntroSeed,
   setMessages,
+  setNewChatWorkMode,
   setResumeExhaustedSessionId,
   setResumeFailedSessionId,
   setSelectedStoredSessionId,
@@ -298,6 +302,7 @@ type SessionRuntimeStatePatch = Partial<
     | 'provider'
     | 'reasoningEffort'
     | 'serviceTier'
+    | 'workMode'
     | 'yolo'
   >
 >
@@ -361,6 +366,12 @@ function applyRuntimeInfo(info: SessionRuntimeInfo | undefined): SessionRuntimeS
     sessionState.fast = info.fast
   }
 
+  if (info.work_mode !== undefined) {
+    const workMode = isDesktopWorkMode(info.work_mode) ? info.work_mode : null
+    setCurrentWorkMode(workMode)
+    sessionState.workMode = workMode
+  }
+
   if (typeof info.yolo === 'boolean') {
     setYoloActive(info.yolo)
     sessionState.yolo = info.yolo
@@ -379,6 +390,7 @@ function applyStoredSessionPreviewRuntimeInfo(stored: { model?: null | string } 
   setCurrentReasoningEffort('')
   setCurrentServiceTier('')
   setCurrentFastMode(false)
+  setCurrentWorkMode(null)
   setYoloActive(false)
   setCurrentPersonality('')
 }
@@ -432,6 +444,8 @@ export function useSessionActions({
       // is cleared.
       setCurrentServiceTier('')
       setYoloActive(false)
+      setCurrentWorkMode(null)
+      setNewChatWorkMode('everyday')
       setCurrentCwd(workspaceCwdForNewSession())
       setCurrentBranch('')
       setCurrentProject(null)
@@ -470,6 +484,7 @@ export function useSessionActions({
         const uiProvider = $currentProvider.get().trim()
         const uiEffort = $currentReasoningEffort.get().trim()
         const uiFast = $currentFastMode.get()
+        const workMode = $newChatWorkMode.get()
 
         const created = await requestGateway<SessionCreateResponse>('session.create', {
           cols: 96,
@@ -477,7 +492,8 @@ export function useSessionActions({
           ...(newChatProfile ? { profile: newChatProfile } : {}),
           ...(uiModel ? { model: uiModel, ...(uiProvider ? { provider: uiProvider } : {}) } : {}),
           ...(uiEffort ? { reasoning_effort: uiEffort } : {}),
-          ...(uiFast ? { fast: true } : {})
+          ...(uiFast ? { fast: true } : {}),
+          work_mode: workMode
         })
 
         const stored = created.stored_session_id ?? null

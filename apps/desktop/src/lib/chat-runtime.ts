@@ -46,6 +46,7 @@ export function createClientSessionState(
     reasoningEffort: '',
     serviceTier: '',
     fast: false,
+    workMode: null,
     yolo: false,
     personality: '',
     busy: false,

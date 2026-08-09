@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import unicodeSpinners from 'unicode-animations'
 
 import { artWidth, caduceus, CADUCEUS_WIDTH, logo, LOGO_WIDTH } from '../banner.js'
+import { workModeLabel } from '../domain/workModes.js'
 import { flat } from '../lib/text.js'
 import type { Theme } from '../theme.js'
 import type { PanelSection, SessionInfo } from '../types.js'
@@ -295,6 +296,8 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
             <Text color={t.color.muted}> · Nous Research</Text>
           </Text>
 
+          {info.work_mode && <Text color={t.color.muted}>Work mode: {workModeLabel(info.work_mode)}</Text>}
+
           <Text color={t.color.muted} wrap="truncate-end">
             {info.cwd || process.cwd()}
           </Text>
@@ -325,6 +328,7 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
               {info.model.split('/').pop()}
               <Text color={t.color.muted}> · Nous Research</Text>
             </Text>
+            {info.work_mode && <Text color={t.color.muted}>Work mode: {workModeLabel(info.work_mode)}</Text>}
             <Text color={t.color.muted} wrap="truncate-end">
               {info.cwd || process.cwd()}
             </Text>

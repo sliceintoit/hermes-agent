@@ -2,6 +2,7 @@ import { Box, Text, useInput, useStdout } from '@hermes/ink'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { TUI_SESSION_MODEL_FLAG } from '../domain/slash.js'
+import { DEFAULT_WORK_MODE, WORK_MODES, type WorkMode, workModeLabel } from '../domain/workModes.js'
 import type { GatewayClient } from '../gatewayClient.js'
 import type {
   SessionActiveItem,
@@ -114,7 +115,9 @@ export const orchestratorContextHintSegments = (newSelected: boolean): Orchestra
         { role: 'hotkey', text: 'Enter' },
         { role: 'text', text: ' start · ' },
         { role: 'hotkey', text: 'Tab' },
-        { role: 'text', text: ' model' }
+        { role: 'text', text: ' model · ' },
+        { role: 'hotkey', text: 'w' },
+        { role: 'text', text: ' work mode' }
       ]
     : [
         { role: 'label', text: 'Session row:' },
@@ -291,6 +294,74 @@ function OrchestratorHintText({ segments, t }: OrchestratorHintTextProps) {
   )
 }
 
+function WorkModePicker({ onCancel, onSelect, t }: WorkModePickerProps) {
+  const [selected, setSelected] = useState(0)
+  const { stdout } = useStdout()
+  const width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, (stdout?.columns ?? 80) - 6))
+
+  useInput((_ch, key) => {
+    if (key.escape) {
+      return onCancel()
+    }
+
+    if (key.upArrow) {
+      return setSelected(current => Math.max(0, current - 1))
+    }
+
+    if (key.downArrow) {
+      return setSelected(current => Math.min(WORK_MODES.length - 1, current + 1))
+    }
+
+    if (key.return) {
+      return onSelect(WORK_MODES[selected]!.id)
+    }
+  })
+
+  return (
+    <Box flexDirection="column" width={width}>
+      <Text bold color={t.color.accent}>
+        Choose a work mode
+      </Text>
+      <Text color={t.color.muted}>This fixes the available tools for the new conversation.</Text>
+
+      {WORK_MODES.map((mode, index) => {
+        const active = index === selected
+
+        return (
+          <Box
+            backgroundColor={active ? t.color.completionCurrentBg : undefined}
+            flexDirection="column"
+            key={mode.id}
+            onClick={() => onSelect(mode.id)}
+            paddingX={1}
+            width="100%"
+          >
+            <Text bold={active} color={active ? t.color.label : t.color.text}>
+              {active ? '▸ ' : '  '}
+              {mode.label}
+            </Text>
+            <Text color={t.color.muted} wrap="truncate-end">
+              {'    '}{mode.description}
+            </Text>
+          </Box>
+        )
+      })}
+
+      <OrchestratorHintText
+        segments={[
+          { role: 'hotkey', text: '↑↓' },
+          { role: 'text', text: ' choose · ' },
+          { role: 'hotkey', text: 'Enter' },
+          { role: 'text', text: ' select · ' },
+          { role: 'hotkey', text: 'Esc' },
+          { role: 'text', text: ' back' }
+        ]}
+        t={t}
+      />
+    </Box>
+  )
+}
+
 export function ActiveSessionSwitcher({
   currentSessionId,
   gw,
@@ -309,7 +380,9 @@ export function ActiveSessionSwitcher({
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState('')
   const [draftModel, setDraftModel] = useState('')
+  const [draftWorkMode, setDraftWorkMode] = useState<WorkMode>(DEFAULT_WORK_MODE)
   const [pickingModel, setPickingModel] = useState(false)
+  const [pickingWorkMode, setPickingWorkMode] = useState(false)
   const [closingId, setClosingId] = useState('')
   // When non-null, the user pressed `d` on this (history) session and we await
   // a second `d` to confirm deletion. Tracked by session id (not row index) so
@@ -461,9 +534,9 @@ export function ActiveSessionSwitcher({
       }
 
       setDraft('')
-      onNewPrompt(prompt, draftModel || undefined)
+      onNewPrompt(prompt, draftModel || undefined, draftWorkMode)
     },
-    [draftModel, onNewPrompt]
+    [draftModel, draftWorkMode, onNewPrompt]
   )
 
   const closeSelected = useCallback(async () => {
@@ -567,7 +640,7 @@ export function ActiveSessionSwitcher({
   const draftHasText = Boolean(draft.trim())
 
   useInput((ch, key) => {
-    if (pickingModel || deleting) {
+    if (pickingModel || pickingWorkMode || deleting) {
       return
     }
 
@@ -593,7 +666,7 @@ export function ActiveSessionSwitcher({
     }
 
     if (isCtrl('n')) {
-      return onNew()
+      return onNew(draftWorkMode)
     }
 
     if (isCtrl('r')) {
@@ -606,6 +679,12 @@ export function ActiveSessionSwitcher({
       if (newSelected) {
         setPickingModel(true)
       }
+
+      return
+    }
+
+    if (newSelected && !draftHasText && lower === 'w' && !key.ctrl) {
+      setPickingWorkMode(true)
 
       return
     }
@@ -641,7 +720,7 @@ export function ActiveSessionSwitcher({
     if (key.return) {
       if (newSelected) {
         if (!draftHasText) {
-          return onNew()
+          return onNew(draftWorkMode)
         }
 
         return
@@ -668,6 +747,19 @@ export function ActiveSessionSwitcher({
           setPickingModel(false)
         }}
         sessionId={currentSessionId}
+        t={t}
+      />
+    )
+  }
+
+  if (pickingWorkMode) {
+    return (
+      <WorkModePicker
+        onCancel={() => setPickingWorkMode(false)}
+        onSelect={mode => {
+          setDraftWorkMode(mode)
+          setPickingWorkMode(false)
+        }}
         t={t}
       />
     )
@@ -723,7 +815,7 @@ export function ActiveSessionSwitcher({
 
         <Box {...fixedSessionColumnStyle()} width={11}>
           <Text color={newRowTextColor ?? t.color.muted} wrap="truncate-end">
-            ✎ draft
+            {workModeLabel(draftWorkMode)}
           </Text>
         </Box>
 
@@ -877,7 +969,7 @@ export function ActiveSessionSwitcher({
           </Box>
           <OrchestratorHintText segments={orchestratorContextHintSegments(true)} t={t} />
           <Text color={t.color.muted} wrap="truncate-end">
-            model: {draftModelDisplayLabel(draftModel)}
+            mode: {workModeLabel(draftWorkMode)} · model: {draftModelDisplayLabel(draftModel)}
           </Text>
         </>
       ) : (
@@ -907,9 +999,15 @@ interface ActiveSessionSwitcherProps {
   gw: GatewayClient
   onCancel: () => void
   onClose: (id: string) => Promise<null | SessionCloseResponse>
-  onNew: () => void
-  onNewPrompt: (prompt: string, modelArg?: string) => void
+  onNew: (workMode?: WorkMode) => void
+  onNewPrompt: (prompt: string, modelArg?: string, workMode?: WorkMode) => void
   onResume: (id: string) => void
   onSelect: (id: string) => void
+  t: Theme
+}
+
+interface WorkModePickerProps {
+  onCancel: () => void
+  onSelect: (mode: WorkMode) => void
   t: Theme
 }

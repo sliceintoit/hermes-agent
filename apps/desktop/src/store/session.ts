@@ -5,6 +5,7 @@ import type { ContextSuggestion } from '@/app/types'
 import type { HermesConnection } from '@/global'
 import type { ChatMessage } from '@/lib/chat-messages'
 import { persistBoolean, persistString, storedBoolean, storedString } from '@/lib/storage'
+import { DEFAULT_DESKTOP_WORK_MODE, type DesktopWorkMode } from '@/lib/work-modes'
 import type { ProjectInfo, SessionInfo, UsageStats } from '@/types/hermes'
 
 type Updater<T> = T | ((current: T) => T)
@@ -241,6 +242,9 @@ export const $currentProvider = atom(storedString(COMPOSER_PROVIDER_KEY) ?? '')
 export const $currentReasoningEffort = atom(storedString(COMPOSER_EFFORT_KEY) ?? '')
 export const $currentServiceTier = atom('')
 export const $currentFastMode = atom(storedBoolean(COMPOSER_FAST_KEY, false))
+// Reflection of the immutable work mode reported by the active runtime
+// session. Unlike $newChatWorkMode this is never persisted or user-editable.
+export const $currentWorkMode = atom<DesktopWorkMode | null>(null)
 // Effective approval-bypass state mirrored from the gateway (session.info).
 // Persistence lives in the backend config (approvals.mode), so this is a plain
 // reflection of the truth the gateway reports rather than its own store.
@@ -267,6 +271,10 @@ export const $introSeed = atom(0)
 export const $contextSuggestions = atom<ContextSuggestion[]>([])
 export const $modelPickerOpen = atom(false)
 export const $sessionPickerOpen = atom(false)
+// New-chat-only selection. It is intentionally neither profile configuration
+// nor localStorage state: the selected value is sent once with session.create
+// and becomes immutable agent/session metadata from that point onward.
+export const $newChatWorkMode = atom<DesktopWorkMode>(DEFAULT_DESKTOP_WORK_MODE)
 
 export const setConnection = (next: Updater<HermesConnection | null>) => updateAtom($connection, next)
 export const setGatewayState = (next: Updater<string>) => updateAtom($gatewayState, next)
@@ -317,6 +325,7 @@ export const setCurrentReasoningEffort = (next: Updater<string>) => {
 }
 
 export const setCurrentServiceTier = (next: Updater<string>) => updateAtom($currentServiceTier, next)
+export const setCurrentWorkMode = (next: Updater<DesktopWorkMode | null>) => updateAtom($currentWorkMode, next)
 
 export const setCurrentFastMode = (next: Updater<boolean>) => {
   updateAtom($currentFastMode, next)
@@ -350,6 +359,7 @@ export const setIntroSeed = (next: Updater<number>) => updateAtom($introSeed, ne
 export const setContextSuggestions = (next: Updater<ContextSuggestion[]>) => updateAtom($contextSuggestions, next)
 export const setModelPickerOpen = (next: Updater<boolean>) => updateAtom($modelPickerOpen, next)
 export const setSessionPickerOpen = (next: Updater<boolean>) => updateAtom($sessionPickerOpen, next)
+export const setNewChatWorkMode = (next: Updater<DesktopWorkMode>) => updateAtom($newChatWorkMode, next)
 
 // Watchdog tracking — when does a "working" session count as stuck?
 // Long-running tool calls (LLM inference, long shell commands, web fetches)

@@ -375,6 +375,7 @@ export interface SessionRuntimeInfo {
   tools?: Record<string, string[]>
   usage?: Partial<UsageStats>
   version?: string
+  work_mode?: null | string
   yolo?: boolean
 }
 

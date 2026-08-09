@@ -172,6 +172,7 @@ export interface SessionInfo {
   update_command?: string
   usage?: Usage
   version?: string
+  work_mode?: string | null
 }
 
 export interface Usage {

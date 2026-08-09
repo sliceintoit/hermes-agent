@@ -1080,7 +1080,7 @@ def test_session_resume_passes_stored_runtime_to_agent(monkeypatch):
                 "id": target,
                 "model": "gpt-5.4",
                 "billing_provider": "openai-codex",
-                "model_config": '{"reasoning_config":{"enabled":true,"effort":"high"},"service_tier":"priority","base_url":"https://custom.example/v1","api_mode":"chat_completions"}',
+                "model_config": '{"reasoning_config":{"enabled":true,"effort":"high"},"service_tier":"priority","base_url":"https://custom.example/v1","api_mode":"chat_completions","_tui_work_mode":"search_read"}',
             }
 
         def reopen_session(self, target):
@@ -1108,7 +1108,11 @@ def test_session_resume_passes_stored_runtime_to_agent(monkeypatch):
     monkeypatch.setattr(server, "_init_session", fake_init_session)
 
     resp = server.handle_request(
-        {"id": "1", "method": "session.resume", "params": {"session_id": "stored-session"}}
+        {
+            "id": "1",
+            "method": "session.resume",
+            "params": {"eager_build": True, "session_id": "stored-session"},
+        }
     )
 
     assert resp["result"]["info"] == {"model": "gpt-5.4", "provider": "openai-codex"}
@@ -1121,6 +1125,7 @@ def test_session_resume_passes_stored_runtime_to_agent(monkeypatch):
     assert captured["provider_override"] == "openai-codex"
     assert captured["reasoning_config_override"] == {"enabled": True, "effort": "high"}
     assert captured["service_tier_override"] == "priority"
+    assert captured["work_mode"] == "search_read"
     runtime_sid = resp["result"]["session_id"]
     assert server._sessions[runtime_sid]["model_override"] == captured["model_override"]
 
@@ -5022,7 +5027,7 @@ def test_session_create_close_race_does_not_orphan_worker(monkeypatch):
     release_build = threading.Event()
     build_entered = threading.Event()
 
-    def _slow_make_agent(sid, key, session_id=None, session_db=None):
+    def _slow_make_agent(sid, key, session_id=None, session_db=None, **_kwargs):
         build_started.set()
         build_entered.set()
         release_build.wait(timeout=3.0)
@@ -5130,7 +5135,7 @@ def test_session_create_no_race_keeps_worker_alive(monkeypatch):
             self.base_url = ""
             self.api_key = ""
 
-    monkeypatch.setattr(server, "_make_agent", lambda sid, key, session_db=None: _FakeAgent())
+    monkeypatch.setattr(server, "_make_agent", lambda sid, key, session_db=None, **_kwargs: _FakeAgent())
     monkeypatch.setattr(server, "_SlashWorker", _FakeWorker)
     monkeypatch.setattr(
         server,
@@ -5226,7 +5231,7 @@ def test_session_create_continues_when_state_db_is_unavailable(monkeypatch):
 
     emits = []
 
-    monkeypatch.setattr(server, "_make_agent", lambda sid, key, session_db=None: _FakeAgent())
+    monkeypatch.setattr(server, "_make_agent", lambda sid, key, session_db=None, **_kwargs: _FakeAgent())
     monkeypatch.setattr(server, "_SlashWorker", _FakeWorker)
     monkeypatch.setattr(server, "_get_db", lambda: None)
     monkeypatch.setattr(server, "_session_info", lambda _a, *a2: {"model": "x"})
@@ -6790,6 +6795,22 @@ def test_make_agent_reads_nested_max_turns(monkeypatch):
     assert mock_agent.call_args.kwargs["max_iterations"] == 200
 
 
+def test_make_agent_uses_the_session_work_mode_toolsets(monkeypatch):
+    _setup_make_agent_mocks(monkeypatch, {})
+    monkeypatch.setattr(
+        server,
+        "_load_enabled_toolsets",
+        lambda work_mode=None: ["core", "project", "vision", "web"]
+        if work_mode == "search_read"
+        else None,
+    )
+
+    with patch("run_agent.AIAgent") as mock_agent:
+        server._make_agent("sid1", "key1", work_mode="search_read")
+
+    assert mock_agent.call_args.kwargs["enabled_toolsets"] == ["core", "project", "vision", "web"]
+
+
 def test_make_agent_waits_for_shared_mcp_discovery(monkeypatch):
     _setup_make_agent_mocks(monkeypatch, {})
     waited = []
@@ -7833,6 +7854,7 @@ def test_start_agent_build_passes_session_model_override(monkeypatch):
         "model_override": override,
         "create_reasoning_override": reasoning,
         "create_service_tier_override": "priority",
+        "work_mode": "build_websites",
     }
     server._sessions[sid] = session
     try:
@@ -7841,6 +7863,91 @@ def test_start_agent_build_passes_session_model_override(monkeypatch):
         assert captured.get("model_override") == override
         assert captured.get("reasoning_config_override") == reasoning
         assert captured.get("service_tier_override") == "priority"
+        assert captured.get("work_mode") == "build_websites"
         assert session["agent"].model == "claude-sonnet-4.6"
     finally:
         server._sessions.clear()
+
+
+def test_named_work_modes_resolve_to_fixed_desktop_toolsets():
+    assert server._load_enabled_toolsets("everyday") == ["core", "project"]
+    assert server._load_enabled_toolsets("search_read") == ["core", "project", "vision", "web"]
+    assert server._load_enabled_toolsets("build_websites") == ["browser_auth", "coding", "project"]
+    assert server._load_enabled_toolsets("automate") == ["automation", "project"]
+
+
+def test_session_create_stages_selected_work_mode(monkeypatch):
+    monkeypatch.setattr(server, "_start_agent_build", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server.threading,
+        "Timer",
+        lambda *args, **kwargs: types.SimpleNamespace(daemon=False, start=lambda: None),
+    )
+
+    resp = server.handle_request(
+        {
+            "id": "1",
+            "method": "session.create",
+            "params": {"cols": 80, "work_mode": "search_read"},
+        }
+    )
+    assert resp is not None
+    sid = resp["result"]["session_id"]
+    try:
+        assert server._sessions[sid]["work_mode"] == "search_read"
+        assert resp["result"]["info"]["work_mode"] == "search_read"
+    finally:
+        server._sessions.pop(sid, None)
+
+
+def test_session_create_rejects_unknown_work_mode():
+    resp = server.handle_request(
+        {
+            "id": "1",
+            "method": "session.create",
+            "params": {"cols": 80, "work_mode": "not-a-mode"},
+        }
+    )
+    assert resp is not None
+
+    assert resp["error"]["code"] == 4008
+    assert "unknown work mode" in resp["error"]["message"]
+
+
+def test_ensure_session_db_row_persists_work_mode(monkeypatch):
+    created = []
+
+    class FakeDB:
+        def create_session(self, key, source=None, model=None, model_config=None, cwd=None):
+            created.append(
+                {
+                    "key": key,
+                    "source": source,
+                    "model": model,
+                    "model_config": model_config,
+                    "cwd": cwd,
+                }
+            )
+
+    monkeypatch.setattr(server, "_get_db", lambda: FakeDB())
+    monkeypatch.setattr(server, "_resolve_model", lambda: "test-model")
+
+    server._ensure_session_db_row({"session_key": "k1", "work_mode": "search_read"})
+
+    assert created == [
+        {
+            "key": "k1",
+            "source": "tui",
+            "model": "test-model",
+            "model_config": {"_tui_work_mode": "search_read"},
+            "cwd": None,
+        }
+    ]
+
+
+def test_stored_session_runtime_overrides_restores_work_mode():
+    overrides = server._stored_session_runtime_overrides(
+        {"model_config": {"_tui_work_mode": "build_websites"}}
+    )
+
+    assert overrides["work_mode"] == "build_websites"

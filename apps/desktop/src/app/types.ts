@@ -1,6 +1,7 @@
 import type * as React from 'react'
 
 import type { ChatMessage } from '@/lib/chat-messages'
+import type { DesktopWorkMode } from '@/lib/work-modes'
 import type { ProjectInfo } from '@/types/hermes'
 
 export interface ContextSuggestion {
@@ -140,6 +141,7 @@ export interface ClientSessionState {
   reasoningEffort: string
   serviceTier: string
   fast: boolean
+  workMode: DesktopWorkMode | null
   yolo: boolean
   personality: string
   busy: boolean

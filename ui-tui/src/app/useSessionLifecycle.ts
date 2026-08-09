@@ -7,6 +7,7 @@ import { type RefObject, useCallback } from 'react'
 import { buildSetupRequiredSections, SETUP_REQUIRED_TITLE } from '../content/setup.js'
 import { introMsg, toTranscriptMessages } from '../domain/messages.js'
 import { ZERO } from '../domain/usage.js'
+import { DEFAULT_WORK_MODE, type WorkMode } from '../domain/workModes.js'
 import { type GatewayClient } from '../gatewayClient.js'
 import type {
   SessionActivateResponse,
@@ -153,7 +154,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
   )
 
   const startNewSession = useCallback(
-    async (msg?: string, title?: string, keepCurrent = false) => {
+    async (msg?: string, title?: string, keepCurrent = false, workMode: WorkMode = DEFAULT_WORK_MODE) => {
       const setup = await rpc<SetupStatusResponse>('setup.status', {})
 
       if (setup?.provider_configured === false) {
@@ -167,7 +168,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
         await closeSession(getUiState().sid)
       }
 
-      const r = await rpc<SessionCreateResponse>('session.create', { cols: colsRef.current })
+      const r = await rpc<SessionCreateResponse>('session.create', { cols: colsRef.current, work_mode: workMode })
 
       if (!r) {
         patchUiState({ status: 'ready' })
@@ -240,10 +241,10 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
   )
 
   const newLiveSession = useCallback(
-    (msg = 'new live session started', title?: string) => {
+    (msg = 'new live session started', title?: string, workMode: WorkMode = DEFAULT_WORK_MODE) => {
       patchOverlayState({ sessions: false })
 
-      return startNewSession(msg, title, true)
+      return startNewSession(msg, title, true, workMode)
     },
     [startNewSession]
   )

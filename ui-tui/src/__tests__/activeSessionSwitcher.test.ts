@@ -40,7 +40,7 @@ describe('session orchestrator helpers', () => {
 
   it('keeps session orchestrator hotkey hints short and contextual', () => {
     expect(orchestratorContextHint(false)).toBe('Session row: Enter switch · Ctrl+D close')
-    expect(orchestratorContextHint(true)).toBe('New row: type prompt · Enter start · Tab model')
+    expect(orchestratorContextHint(true)).toBe('New row: type prompt · Enter start · Tab model · w work mode')
     expect(orchestratorGlobalHotkeyHint).toBe('↑↓ move · Ctrl+N new · Ctrl+R refresh · Esc close')
     expect(orchestratorGlobalHotkeyHint.length).toBeLessThanOrEqual(56)
   })
@@ -60,7 +60,9 @@ describe('session orchestrator helpers', () => {
       { role: 'hotkey', text: 'Enter' },
       { role: 'text', text: ' start · ' },
       { role: 'hotkey', text: 'Tab' },
-      { role: 'text', text: ' model' }
+      { role: 'text', text: ' model · ' },
+      { role: 'hotkey', text: 'w' },
+      { role: 'text', text: ' work mode' }
     ])
     expect(orchestratorGlobalHotkeyHintSegments.filter(s => s.role === 'hotkey').map(s => s.text)).toEqual([
       '↑↓',
