@@ -185,3 +185,52 @@ def test_no_review_when_memory_disabled():
     agent = _FakeAgent()
     ctx = _build(agent)
     assert ctx.should_review_memory is False
+
+
+def test_preflight_waits_for_real_usage_before_second_compression(monkeypatch):
+    """A still-high rough estimate must not trigger an immediate second pass.
+
+    The first compression deliberately leaves the re-estimate above the
+    threshold.  It marks the compressor as awaiting provider-reported prompt
+    usage, so the next action must be the real LLM request, not another summary
+    generated from the same known-noisy estimate.
+    """
+    compressor = types.SimpleNamespace(
+        protect_first_n=2,
+        protect_last_n=2,
+        threshold_tokens=100,
+        context_length=200,
+        last_prompt_tokens=0,
+        last_real_prompt_tokens=0,
+        awaiting_real_usage_after_compression=False,
+    )
+    compressor.should_defer_preflight_to_real_usage = (
+        lambda _rough_tokens: compressor.awaiting_real_usage_after_compression
+    )
+    compressor.should_compress = lambda tokens: tokens >= compressor.threshold_tokens
+
+    agent = _FakeAgent()
+    agent.compression_enabled = True
+    agent.context_compressor = compressor
+    compress_calls = []
+
+    def _compress(messages, _system_message, **_kwargs):
+        compress_calls.append(list(messages))
+        agent.context_compressor.awaiting_real_usage_after_compression = True
+        # Simulate real progress from the first pass.  The remaining rough
+        # estimate is intentionally still above the threshold.
+        return messages[1:], "SYSTEM"
+
+    setattr(agent, "_compress_context", _compress)
+    monkeypatch.setattr(
+        "agent.turn_context.estimate_request_tokens_rough",
+        lambda *_args, **_kwargs: 120,
+    )
+
+    history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg {i}"}
+        for i in range(5)
+    ]
+    _build(agent, conversation_history=history)
+
+    assert len(compress_calls) == 1

@@ -342,6 +342,11 @@ def build_turn_context(
                 agent._last_content_with_tools = None
                 agent._last_content_tools_all_housekeeping = False
                 agent._mute_post_response = False
+                # The compressor has just marked itself as awaiting real provider
+                # usage.  A fresh rough estimate is still schema-heavy/noisy, so
+                # do not spend another summary pass before that usage arrives.
+                if _defer_preflight(_preflight_tokens):
+                    break
                 if not _compressor.should_compress(_preflight_tokens):
                     break
 
