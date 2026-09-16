@@ -605,7 +605,9 @@ def _format_search_hit(entry: CatalogEntry) -> Dict[str, Any]:
 def dispatch_tool_search(args: Dict[str, Any],
                          *,
                          current_tool_defs: List[Dict[str, Any]],
-                         config: Optional[ToolSearchConfig] = None) -> str:
+                         config: Optional[ToolSearchConfig] = None,
+                         enabled_toolsets: Optional[List[str]] = None,
+                         disabled_toolsets: Optional[List[str]] = None) -> str:
     """Execute the ``tool_search`` bridge tool. Returns a JSON string."""
     if config is None:
         config = load_config()
@@ -622,27 +624,74 @@ def dispatch_tool_search(args: Dict[str, Any],
     _, deferrable = classify_tools(current_tool_defs)
     catalog = build_catalog(deferrable)
     hits = search_catalog(catalog, query, limit=limit)
-    return json.dumps({
+    result = {
         "query": query,
         "total_available": len(catalog),
         "matches": [_format_search_hit(h) for h in hits],
-    }, ensure_ascii=False)
+    }
+    # A specialist mode is discoverable without exposing its tool schemas or
+    # granting access to it. Never suggest repeatedly searching a fixed scope.
+    if enabled_toolsets is not None:
+        from toolsets import TOOLSETS
+        hints = []
+        for definition in TOOLSETS.values():
+            mode = definition.get("work_mode")
+            if mode and mode["keyword"] in query.lower():
+                names = {td["function"]["name"] for td in current_tool_defs}
+                missing = sorted(set(definition["tools"]) - names)
+                if missing:
+                    hints.append(unavailable_tool_result(
+                        missing[0], current_tool_defs, enabled_toolsets, disabled_toolsets
+                    ))
+        if hints:
+            result["availability"] = hints
+    return json.dumps(result, ensure_ascii=False)
+
+
+def unavailable_tool_result(
+    name: str,
+    current_tool_defs: List[Dict[str, Any]],
+    enabled_toolsets: Optional[List[str]] = None,
+    disabled_toolsets: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Explain absence without widening the session or guessing OAuth status."""
+    from toolsets import TOOLSETS, resolve_toolset
+    names = {td["function"]["name"] for td in current_tool_defs}
+    if name in names:
+        return {"status": "direct", "error": f"'{name}' is already available; call it directly."}
+    desired = None if enabled_toolsets is None else {
+        tool for ts in enabled_toolsets for tool in resolve_toolset(ts)
+    }
+    excluded = {tool for ts in (disabled_toolsets or []) for tool in resolve_toolset(ts)}
+    if (desired is not None and name not in desired) or name in excluded:
+        result = {
+            "status": "out_of_scope",
+            "error": f"'{name}' is not available in this session: outside its tool scope. Start a new session with the required work mode; searching or calling directly cannot expand this session.",
+        }
+        for definition in TOOLSETS.values():
+            if name in definition.get("tools", []) and definition.get("work_mode"):
+                mode = definition["work_mode"]
+                result["suggested_work_mode"] = mode["id"]
+                result["action"] = f"Start a new {mode['label']} session."
+                break
+        return result
+    return {
+        "status": "unavailable",
+        "error": f"'{name}' is not currently available. Check integration connection/discovery and configured tool filters before starting a new session. This is not evidence of an authentication failure; do not retry it directly.",
+    }
 
 
 def dispatch_tool_describe(args: Dict[str, Any],
                            *,
-                           current_tool_defs: List[Dict[str, Any]]) -> str:
+                           current_tool_defs: List[Dict[str, Any]],
+                           enabled_toolsets: Optional[List[str]] = None,
+                           disabled_toolsets: Optional[List[str]] = None) -> str:
     """Execute the ``tool_describe`` bridge tool. Returns a JSON string."""
     name = str(args.get("name") or "").strip()
     if not name:
         return json.dumps({"error": "name is required"}, ensure_ascii=False)
     if not is_deferrable_tool_name(name):
-        return json.dumps({
-            "error": (
-                f"'{name}' is not a deferrable tool. If you see it in the tools list "
-                "already, call it directly; otherwise check the spelling against tool_search."
-            ),
-        }, ensure_ascii=False)
+        return json.dumps(unavailable_tool_result(name, current_tool_defs, enabled_toolsets, disabled_toolsets), ensure_ascii=False)
     _, deferrable = classify_tools(current_tool_defs)
     for td in deferrable:
         fn = td.get("function") or {}
@@ -652,9 +701,7 @@ def dispatch_tool_describe(args: Dict[str, Any],
                 "description": fn.get("description", ""),
                 "parameters": fn.get("parameters", {}),
             }, ensure_ascii=False)
-    return json.dumps({
-        "error": f"'{name}' is not currently available. Re-run tool_search to refresh.",
-    }, ensure_ascii=False)
+    return json.dumps(unavailable_tool_result(name, current_tool_defs, enabled_toolsets, disabled_toolsets), ensure_ascii=False)
 
 
 def scoped_deferrable_names(tool_defs: List[Dict[str, Any]]) -> frozenset[str]:
@@ -704,8 +751,9 @@ def resolve_underlying_call(args: Dict[str, Any]) -> Tuple[Optional[str], Dict[s
         return None, {}, "tool_call 'arguments' must be an object"
     if not is_deferrable_tool_name(name):
         return None, {}, (
-            f"'{name}' is not a deferrable tool. If it appears in the model-facing tools "
-            "list already, call it directly instead of via tool_call."
+            f"'{name}' is not a deferrable tool. It may be outside this session's scope "
+            "or unavailable. Call directly ONLY if it is in your current tools list; "
+            "otherwise use a new session with the required capabilities."
         )
     return name, raw_args, None
 

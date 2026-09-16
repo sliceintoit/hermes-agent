@@ -25,19 +25,20 @@ describe('WorkModePill', () => {
     expect(screen.getByText('Search & Read')).toBeTruthy()
     expect(screen.getByText('Build / Websites')).toBeTruthy()
     expect(screen.getByText('Automate')).toBeTruthy()
+    expect(screen.getByText('Robinhood Research')).toBeTruthy()
     expect(screen.getByText('More…')).toBeTruthy()
 
-    fireEvent.click(screen.getByText('Build / Websites'))
+    fireEvent.click(screen.getByText('Robinhood Research'))
 
-    await waitFor(() => expect($newChatWorkMode.get()).toBe('build_websites'))
+    await waitFor(() => expect($newChatWorkMode.get()).toBe('robinhood_research'))
   })
 
-  it('shows the active session mode without exposing a live capability toggle', () => {
+  it.each(['build_websites', 'robinhood_research'] as const)('shows active %s without a live capability toggle', mode => {
     $freshDraftReady.set(false)
-    $currentWorkMode.set('build_websites')
+    $currentWorkMode.set(mode)
     render(<WorkModePill disabled={false} />)
 
-    expect(screen.getByLabelText('Work mode: Build / Websites')).toBeTruthy()
+    expect(screen.getByLabelText(mode === 'build_websites' ? 'Work mode: Build / Websites' : 'Work mode: Robinhood Research')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /work mode/i })).toBeNull()
   })
 })

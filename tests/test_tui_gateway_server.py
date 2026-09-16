@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 from hermes_cli.active_sessions import active_session_registry_snapshot
 from tui_gateway import server
@@ -7876,7 +7878,8 @@ def test_named_work_modes_resolve_to_fixed_desktop_toolsets():
     assert server._load_enabled_toolsets("automate") == ["automation", "project"]
 
 
-def test_session_create_stages_selected_work_mode(monkeypatch):
+@pytest.mark.parametrize("work_mode", ["search_read", "robinhood_research"])
+def test_session_create_stages_selected_work_mode(monkeypatch, work_mode):
     monkeypatch.setattr(server, "_start_agent_build", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         server.threading,
@@ -7888,14 +7891,14 @@ def test_session_create_stages_selected_work_mode(monkeypatch):
         {
             "id": "1",
             "method": "session.create",
-            "params": {"cols": 80, "work_mode": "search_read"},
+            "params": {"cols": 80, "work_mode": work_mode},
         }
     )
     assert resp is not None
     sid = resp["result"]["session_id"]
     try:
-        assert server._sessions[sid]["work_mode"] == "search_read"
-        assert resp["result"]["info"]["work_mode"] == "search_read"
+        assert server._sessions[sid]["work_mode"] == work_mode
+        assert resp["result"]["info"]["work_mode"] == work_mode
     finally:
         server._sessions.pop(sid, None)
 
@@ -7914,7 +7917,8 @@ def test_session_create_rejects_unknown_work_mode():
     assert "unknown work mode" in resp["error"]["message"]
 
 
-def test_ensure_session_db_row_persists_work_mode(monkeypatch):
+@pytest.mark.parametrize("work_mode", ["search_read", "robinhood_research"])
+def test_ensure_session_db_row_persists_work_mode(monkeypatch, work_mode):
     created = []
 
     class FakeDB:
@@ -7932,22 +7936,38 @@ def test_ensure_session_db_row_persists_work_mode(monkeypatch):
     monkeypatch.setattr(server, "_get_db", lambda: FakeDB())
     monkeypatch.setattr(server, "_resolve_model", lambda: "test-model")
 
-    server._ensure_session_db_row({"session_key": "k1", "work_mode": "search_read"})
+    server._ensure_session_db_row({"session_key": "k1", "work_mode": work_mode})
 
     assert created == [
         {
             "key": "k1",
             "source": "tui",
             "model": "test-model",
-            "model_config": {"_tui_work_mode": "search_read"},
+            "model_config": {"_tui_work_mode": work_mode},
             "cwd": None,
         }
     ]
 
 
-def test_stored_session_runtime_overrides_restores_work_mode():
+@pytest.mark.parametrize("work_mode", ["build_websites", "robinhood_research"])
+def test_stored_session_runtime_overrides_restores_work_mode(work_mode):
     overrides = server._stored_session_runtime_overrides(
-        {"model_config": {"_tui_work_mode": "build_websites"}}
+        {"model_config": {"_tui_work_mode": work_mode}}
     )
 
-    assert overrides["work_mode"] == "build_websites"
+    assert overrides["work_mode"] == work_mode
+
+
+def test_robinhood_readiness_checked_before_agent_construction(monkeypatch):
+    from tui_gateway import work_modes
+    _setup_make_agent_mocks(monkeypatch, {})
+
+    def unavailable(mode):
+        assert mode == "robinhood_research"
+        raise ValueError("Robinhood disconnected")
+
+    monkeypatch.setattr(work_modes, "validate_work_mode_readiness", unavailable)
+    with patch("run_agent.AIAgent") as ctor:
+        with pytest.raises(ValueError, match="Robinhood disconnected"):
+            server._make_agent("sid1", "key1", work_mode="robinhood_research")
+        ctor.assert_not_called()

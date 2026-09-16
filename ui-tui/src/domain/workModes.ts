@@ -20,6 +20,11 @@ export const WORK_MODES = [
     label: 'Automate'
   },
   {
+    description: 'Analyze market data locally. Requires Robinhood MCP; no account, holdings, or order tools.',
+    id: 'robinhood_research',
+    label: 'Robinhood Research'
+  },
+  {
     description: 'Use specialist integrations already configured in Tools.',
     id: 'more',
     label: 'More…'

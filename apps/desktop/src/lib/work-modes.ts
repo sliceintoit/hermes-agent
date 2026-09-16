@@ -20,6 +20,11 @@ export const DESKTOP_WORK_MODES = [
     label: 'Automate'
   },
   {
+    description: 'Analyze Robinhood market data locally. Requires a connected Robinhood MCP; no account, holdings, or order tools.',
+    id: 'robinhood_research',
+    label: 'Robinhood Research'
+  },
+  {
     description: 'Use specialist integrations you have already configured.',
     id: 'more',
     label: 'More…'

@@ -9,6 +9,7 @@ describe('Desktop work modes', () => {
       'search_read',
       'build_websites',
       'automate',
+      'robinhood_research',
       'more'
     ])
     expect(DEFAULT_WORK_MODE).toBe('everyday')

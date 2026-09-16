@@ -3724,6 +3724,9 @@ def _make_agent(
     except Exception:
         pass
 
+    from tui_gateway.work_modes import validate_work_mode_readiness
+
+    validate_work_mode_readiness(work_mode)
     cfg = _load_cfg()
     agent_cfg = cfg.get("agent") or {}
     system_prompt = _prompt_text(agent_cfg.get("system_prompt", ""))

@@ -304,12 +304,10 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                         function_name = _underlying
                         function_args = _underlying_args
                     else:
-                        _ts_scope_block = json.dumps({
-                            "error": (
-                                f"'{_underlying}' is not available in this session. "
-                                "Use tool_search to find tools you can call."
-                            ),
-                        }, ensure_ascii=False)
+                        _ts_scope_block = json.dumps(_ts.unavailable_tool_result(
+                            _underlying, [], getattr(agent, "enabled_toolsets", None),
+                            getattr(agent, "disabled_toolsets", None),
+                        ), ensure_ascii=False)
         except Exception:
             pass
 
@@ -811,10 +809,11 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                         function_name = _underlying
                         function_args = _underlying_args
                     else:
-                        _ts_scope_block = (
-                            f"'{_underlying}' is not available in this session. "
-                            "Use tool_search to find tools you can call."
+                        diagnosis = _ts.unavailable_tool_result(
+                            _underlying, [], getattr(agent, "enabled_toolsets", None),
+                            getattr(agent, "disabled_toolsets", None),
                         )
+                        _ts_scope_block = diagnosis["error"] + " " + diagnosis.get("action", "")
         except Exception:
             pass
 

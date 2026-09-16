@@ -79,6 +79,21 @@ TOOLSETS = {
         "includes": [],
     },
 
+    # Explicit market-data allowlist, not the whole brokerage integration.
+    # Runtime MCP registration still applies the user's configured tool filter.
+    "robinhood_research": {
+        "description": "Robinhood market data only; no account, holdings, or order tools",
+        "work_mode": {"id": "robinhood_research", "label": "Robinhood Research", "keyword": "robinhood"},
+        "tools": [
+            "mcp_robinhood_search",
+            "mcp_robinhood_get_equity_historicals",
+            "mcp_robinhood_get_equity_quotes",
+            "mcp_robinhood_get_equity_technical_indicators",
+            "mcp_robinhood_get_index_historicals",
+        ],
+        "includes": [],
+    },
+
     # Basic toolsets - individual tool categories
     "web": {
         "description": "Web research and content extraction tools",
