@@ -195,4 +195,29 @@ describe('useModelControls', () => {
     await result.current.refreshCurrentModel(true)
     expect($currentModel.get()).toBe('openai/gpt-5.5')
   })
+
+  it('does not let an in-flight profile refresh overwrite a later picker choice', async () => {
+    let resolveDefault!: (value: { model: string; provider: string }) => void
+    vi.mocked(getGlobalModelInfo).mockReturnValue(
+      new Promise(resolve => {
+        resolveDefault = resolve
+      })
+    )
+
+    const { result } = renderHook(() =>
+      useModelControls({
+        activeSessionId: null,
+        queryClient: new QueryClient(),
+        requestGateway: vi.fn()
+      })
+    )
+
+    const refresh = result.current.refreshCurrentModel()
+    await result.current.selectModel({ model: 'anthropic/claude-sonnet-4.6', provider: 'anthropic' })
+    resolveDefault({ model: 'openai/gpt-5.5', provider: 'openai-codex' })
+    await refresh
+
+    expect($currentModel.get()).toBe('anthropic/claude-sonnet-4.6')
+    expect($currentProvider.get()).toBe('anthropic')
+  })
 })

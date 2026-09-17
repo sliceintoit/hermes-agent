@@ -464,6 +464,16 @@ export function useSessionActions({
       creatingSessionRef.current = true
 
       try {
+        // Send is the linearization point for the visible selector state. The
+        // profile handshake can yield while config/model refreshes complete,
+        // so snapshot before awaiting and never reread these atoms afterward.
+        const selection = {
+          effort: $currentReasoningEffort.get().trim(),
+          fast: $currentFastMode.get(),
+          model: $currentModel.get().trim(),
+          provider: $currentProvider.get().trim()
+        }
+
         // A plain new session (top "New Session", /new, keybind) leaves
         // $newChatProfile null to mean "use the live context"; the per-profile
         // "+" sets it explicitly. Resolve null to the active gateway profile so
@@ -480,19 +490,17 @@ export function useSessionActions({
         // with every session.create so the new chat opens on whatever the picker
         // shows — applied as per-session overrides, never written to the profile
         // default (that lives in Settings → Model).
-        const uiModel = $currentModel.get().trim()
-        const uiProvider = $currentProvider.get().trim()
-        const uiEffort = $currentReasoningEffort.get().trim()
-        const uiFast = $currentFastMode.get()
         const workMode = $newChatWorkMode.get()
 
         const created = await requestGateway<SessionCreateResponse>('session.create', {
           cols: 96,
           ...(cwd && { cwd }),
           ...(newChatProfile ? { profile: newChatProfile } : {}),
-          ...(uiModel ? { model: uiModel, ...(uiProvider ? { provider: uiProvider } : {}) } : {}),
-          ...(uiEffort ? { reasoning_effort: uiEffort } : {}),
-          ...(uiFast ? { fast: true } : {}),
+          ...(selection.model
+            ? { model: selection.model, ...(selection.provider ? { provider: selection.provider } : {}) }
+            : {}),
+          ...(selection.effort ? { reasoning_effort: selection.effort } : {}),
+          fast: selection.fast,
           work_mode: workMode
         })
 

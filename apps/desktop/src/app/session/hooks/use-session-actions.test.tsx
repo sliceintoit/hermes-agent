@@ -10,6 +10,10 @@ import { $activeGatewayProfile, $newChatProfile } from '@/store/profile'
 import {
   $activeSessionId,
   $currentCwd,
+  $currentFastMode,
+  $currentModel,
+  $currentProvider,
+  $currentReasoningEffort,
   $currentWorkMode,
   $messages,
   $newChatWorkMode,
@@ -162,6 +166,24 @@ describe('createBackendSessionForSend profile routing', () => {
     })
 
     expect(params).toMatchObject({ work_mode: 'build_websites' })
+  })
+
+  it('sends the visible selector values including explicit Fast=false', async () => {
+    $currentModel.set('openai/gpt-5.6')
+    $currentProvider.set('openai-codex')
+    $currentReasoningEffort.set('high')
+    $currentFastMode.set(false)
+
+    const params = await createWith(() => {
+      $activeGatewayProfile.set('default')
+    })
+
+    expect(params).toMatchObject({
+      fast: false,
+      model: 'openai/gpt-5.6',
+      provider: 'openai-codex',
+      reasoning_effort: 'high'
+    })
   })
 
   it('reflects the mode returned for the newly created runtime session', async () => {

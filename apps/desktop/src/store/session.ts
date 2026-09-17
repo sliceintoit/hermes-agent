@@ -276,6 +276,16 @@ export const $sessionPickerOpen = atom(false)
 // and becomes immutable agent/session metadata from that point onward.
 export const $newChatWorkMode = atom<DesktopWorkMode>(DEFAULT_DESKTOP_WORK_MODE)
 
+// Monotonic user-intent marker for the sticky composer model/effort/fast
+// selection. Async profile/config refreshes snapshot this before awaiting and
+// stand down when a picker action advances it.
+let composerSelectionGeneration = 0
+
+export const getComposerSelectionGeneration = (): number => composerSelectionGeneration
+export const markComposerSelectionManual = (): void => {
+  composerSelectionGeneration += 1
+}
+
 export const setConnection = (next: Updater<HermesConnection | null>) => updateAtom($connection, next)
 export const setGatewayState = (next: Updater<string>) => updateAtom($gatewayState, next)
 export const setSessions = (next: Updater<SessionInfo[]>) => updateAtom($sessions, next)

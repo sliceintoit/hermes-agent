@@ -115,8 +115,8 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel] = useState('')
   const [auxiliary, setAuxiliary] = useState<AuxiliaryModelsResponse | null>(null)
-  // Full profile config, kept so the reasoning/speed defaults round-trip
-  // (read agent.* → write back the whole record) like the generic config page.
+  // Full profile config for rendering and optimistic updates. Single-key writes
+  // persist sparse patches so stale snapshots cannot overwrite newer settings.
   const [config, setConfig] = useState<HermesConfigRecord | null>(null)
   const [applying, setApplying] = useState(false)
   const [editingAuxTask, setEditingAuxTask] = useState<null | string>(null)
@@ -218,8 +218,8 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
   const effortValue = String(getNested(config ?? {}, 'agent.reasoning_effort') ?? '').trim().toLowerCase() || 'medium'
   const fastOn = isFastTier(getNested(config ?? {}, 'agent.service_tier'))
 
-  // Persist a single agent.* default by round-tripping the whole config record
-  // (PUT /api/config replaces it) — optimistic, with rollback on failure.
+  // Persist one agent.* default as a sparse patch (PUT deep-merges it), while
+  // retaining the full merged record in local UI state.
   const writeAgentDefault = useCallback(
     async (key: string, value: string) => {
       if (!config) {
@@ -231,7 +231,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       setConfig(next)
 
       try {
-        await saveHermesConfig(next)
+        await saveHermesConfig(setNested({}, key, value))
       } catch (err) {
         setConfig(prev)
         notifyError(err, m.defaultsFailed)

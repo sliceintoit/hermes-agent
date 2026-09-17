@@ -1,5 +1,5 @@
 import { type QueryClient } from '@tanstack/react-query'
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 
 import { getGlobalModelInfo } from '@/hermes'
 import { useI18n } from '@/i18n'
@@ -8,6 +8,8 @@ import {
   $activeSessionId,
   $currentModel,
   $currentProvider,
+  getComposerSelectionGeneration,
+  markComposerSelectionManual,
   setCurrentModel,
   setCurrentProvider
 } from '@/store/session'
@@ -27,6 +29,7 @@ interface ModelControlsOptions {
 export function useModelControls({ activeSessionId, queryClient, requestGateway }: ModelControlsOptions) {
   const { t } = useI18n()
   const copy = t.desktop
+  const profileRefreshEpochRef = useRef(0)
 
   const updateModelOptionsCache = useCallback(
     (provider: string, model: string, includeGlobal: boolean) => {
@@ -47,6 +50,12 @@ export function useModelControls({ activeSessionId, queryClient, requestGateway 
   // $currentModel) survives the lifecycle refreshes that fire on boot / fresh
   // draft / session events. A live session owns the footer, so skip entirely.
   const refreshCurrentModel = useCallback(async (force = false) => {
+    if (force) {
+      profileRefreshEpochRef.current += 1
+    }
+
+    const profileRefreshEpoch = profileRefreshEpochRef.current
+
     try {
       if ($activeSessionId.get()) {
         return
@@ -56,9 +65,15 @@ export function useModelControls({ activeSessionId, queryClient, requestGateway 
         return
       }
 
+      const selectionGeneration = getComposerSelectionGeneration()
       const result = await getGlobalModelInfo()
 
-      if ($activeSessionId.get() || (!force && $currentModel.get())) {
+      if (
+        profileRefreshEpochRef.current !== profileRefreshEpoch ||
+        $activeSessionId.get() ||
+        getComposerSelectionGeneration() !== selectionGeneration ||
+        (!force && $currentModel.get())
+      ) {
         return
       }
 
@@ -90,6 +105,7 @@ export function useModelControls({ activeSessionId, queryClient, requestGateway 
 
       setCurrentModel(selection.model)
       setCurrentProvider(selection.provider)
+      markComposerSelectionManual()
       updateModelOptionsCache(selection.provider, selection.model, !activeSessionId)
 
       // No live session yet: the pick is pure UI state. session.create reads

@@ -4,6 +4,7 @@ import { getHermesConfig, getHermesConfigDefaults } from '@/hermes'
 import { BUILTIN_PERSONALITIES, normalizePersonalityValue, personalityNamesFromConfig } from '@/lib/chat-runtime'
 import {
   $currentCwd,
+  getComposerSelectionGeneration,
   setAvailablePersonalities,
   setCurrentCwd,
   setCurrentFastMode,
@@ -30,6 +31,8 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
   const [sttEnabled, setSttEnabled] = useState(true)
 
   const refreshHermesConfig = useCallback(async () => {
+    const selectionGeneration = getComposerSelectionGeneration()
+
     try {
       const [config, defaults] = await Promise.all([getHermesConfig(), getHermesConfigDefaults().catch(() => ({}))])
 
@@ -59,9 +62,11 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
       const reasoning = (config.agent?.reasoning_effort ?? '').trim()
       const tier = (config.agent?.service_tier ?? '').trim()
 
-      setCurrentReasoningEffort(prev => (activeSessionIdRef.current ? prev : reasoning))
-      setCurrentServiceTier(prev => (activeSessionIdRef.current ? prev : tier))
-      setCurrentFastMode(prev => (activeSessionIdRef.current ? prev : FAST_TIERS.has(tier.toLowerCase())))
+      if (selectionGeneration === getComposerSelectionGeneration()) {
+        setCurrentReasoningEffort(prev => (activeSessionIdRef.current ? prev : reasoning))
+        setCurrentServiceTier(prev => (activeSessionIdRef.current ? prev : tier))
+        setCurrentFastMode(prev => (activeSessionIdRef.current ? prev : FAST_TIERS.has(tier.toLowerCase())))
+      }
 
       setVoiceMaxRecordingSeconds(recordingLimit(config.voice?.max_recording_seconds))
       setSttEnabled(config.stt?.enabled !== false)
