@@ -82,6 +82,16 @@ class TestConfigParsing:
         assert cfg.max_search_limit == 50
         assert cfg.search_default_limit <= cfg.max_search_limit
 
+    def test_defer_defaults_to_the_curated_event_triggered_surface(self):
+        from tools.tool_search import ToolSearchConfig
+        cfg = ToolSearchConfig.from_raw(None)
+        assert {"todo", "session_search", "clarify"} <= cfg.effective_defer_tools
+        assert "terminal" not in cfg.effective_defer_tools
+
+    def test_empty_defer_override_restores_eager_core_tools(self):
+        from tools.tool_search import ToolSearchConfig
+        assert ToolSearchConfig.from_raw({"defer": []}).effective_defer_tools == frozenset()
+
 
 # ---------------------------------------------------------------------------
 # Classification — the hard invariant: core tools NEVER defer.
@@ -149,24 +159,15 @@ class TestThresholdGate:
         cfg = ToolSearchConfig.from_raw({"enabled": "on"})
         assert should_activate(cfg, deferrable_tokens=100, context_length=200_000)
 
-    def test_auto_below_threshold_does_not_activate(self):
+    def test_auto_activates_with_any_deferrable_tool(self):
         from tools.tool_search import ToolSearchConfig, should_activate
         cfg = ToolSearchConfig.from_raw({"enabled": "auto", "threshold_pct": 10})
-        # 5% of 200K = below 10% threshold
-        assert not should_activate(cfg, deferrable_tokens=10_000, context_length=200_000)
+        assert should_activate(cfg, deferrable_tokens=1, context_length=200_000)
 
-    def test_auto_at_or_above_threshold_activates(self):
-        from tools.tool_search import ToolSearchConfig, should_activate
-        cfg = ToolSearchConfig.from_raw({"enabled": "auto", "threshold_pct": 10})
-        assert should_activate(cfg, deferrable_tokens=20_000, context_length=200_000)
-        assert should_activate(cfg, deferrable_tokens=50_000, context_length=200_000)
-
-    def test_auto_without_context_length_uses_20k_cutoff(self):
-        """Fallback cutoff used when the active model is unknown."""
+    def test_auto_without_context_length_still_activates(self):
         from tools.tool_search import ToolSearchConfig, should_activate
         cfg = ToolSearchConfig.from_raw({"enabled": "auto"})
-        assert not should_activate(cfg, deferrable_tokens=10_000, context_length=0)
-        assert should_activate(cfg, deferrable_tokens=25_000, context_length=0)
+        assert should_activate(cfg, deferrable_tokens=1, context_length=0)
 
     def test_token_estimate_proportional_to_schema_size(self):
         from tools.tool_search import estimate_tokens_from_schemas
@@ -249,6 +250,31 @@ class TestAssembly:
         )
         assert not result.activated
         assert {t["function"]["name"] for t in result.tool_defs} == {"terminal", "read_file"}
+
+    def test_curated_core_tools_defer_behind_the_bridge(self):
+        from tools.tool_search import assemble_tool_defs, ToolSearchConfig
+        result = assemble_tool_defs(
+            [_td("terminal"), _td("todo"), _td("session_search"), _td("clarify")],
+            context_length=200_000,
+            config=ToolSearchConfig.from_raw({"enabled": "on"}),
+        )
+        names = {tool["function"]["name"] for tool in result.tool_defs}
+        assert result.activated
+        assert "terminal" in names
+        assert {"todo", "session_search", "clarify"}.isdisjoint(names)
+        assert {"tool_search", "tool_describe", "tool_call"} <= names
+
+    def test_empty_defer_override_keeps_curated_core_tools_direct(self):
+        from tools.tool_search import assemble_tool_defs, ToolSearchConfig
+        result = assemble_tool_defs(
+            [_td("terminal"), _td("todo"), _td("session_search"), _td("clarify")],
+            context_length=200_000,
+            config=ToolSearchConfig.from_raw({"enabled": "on", "defer": []}),
+        )
+        assert not result.activated
+        assert {tool["function"]["name"] for tool in result.tool_defs} == {
+            "terminal", "todo", "session_search", "clarify"
+        }
 
     def test_below_threshold_returns_unchanged(self):
         """Tiny deferrable surface: don't bother."""
