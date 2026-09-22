@@ -3300,8 +3300,16 @@ function getNativeOverlayWidth() {
 }
 
 function getWindowState() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return {
+      isFullscreen: false,
+      nativeOverlayWidth: getNativeOverlayWidth(),
+      windowButtonPosition: null
+    }
+  }
+
   return {
-    isFullscreen: Boolean(mainWindow?.isFullScreen?.()),
+    isFullscreen: Boolean(mainWindow.isFullScreen?.()),
     nativeOverlayWidth: getNativeOverlayWidth(),
     windowButtonPosition: getWindowButtonPosition()
   }
