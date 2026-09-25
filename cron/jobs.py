@@ -626,6 +626,7 @@ def create_job(
     enabled_toolsets: Optional[List[str]] = None,
     workdir: Optional[str] = None,
     no_agent: bool = False,
+    catch_up: bool = False,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -670,6 +671,10 @@ def create_job(
                 and deliver its stdout directly. Empty stdout = silent (no
                 delivery). Requires ``script`` to be set. Ideal for classic
                 watchdogs and periodic alerts that don't need LLM reasoning.
+        catch_up: For recurring jobs, run once after one or more occurrences
+                  were missed while the gateway was offline. Missed occurrences
+                  are coalesced into one run. Defaults to False, preserving the
+                  existing fast-forward behavior.
 
     Returns:
         The created job dict
@@ -704,6 +709,7 @@ def create_job(
     normalized_toolsets = normalized_toolsets or None
     normalized_workdir = _normalize_workdir(workdir)
     normalized_no_agent = bool(no_agent)
+    normalized_catch_up = bool(catch_up)
 
     # no_agent jobs are meaningless without a script — the script IS the job.
     # Surface this as a clear ValueError at create time so bad configs never
@@ -735,6 +741,7 @@ def create_job(
         "base_url": normalized_base_url,
         "script": normalized_script,
         "no_agent": normalized_no_agent,
+        "catch_up": normalized_catch_up,
         "context_from": context_from,
         "schedule": parsed_schedule,
         "schedule_display": parsed_schedule.get("display", schedule),
@@ -1060,10 +1067,9 @@ def advance_next_run(job_id: str) -> bool:
 def get_due_jobs() -> List[Dict[str, Any]]:
     """Get all jobs that are due to run now.
 
-    For recurring jobs (cron/interval), if the scheduled time is stale
-    (more than one period in the past, e.g. because the gateway was down),
-    the job is fast-forwarded to the next future run instead of firing
-    immediately.  This prevents a burst of missed jobs on gateway restart.
+    By default, a stale recurring job is fast-forwarded to the next future run.
+    Jobs with ``catch_up=True`` instead run once immediately; all missed
+    occurrences are coalesced, so gateway restart never creates a replay burst.
     """
     with _jobs_lock():
         return _get_due_jobs_locked()
@@ -1130,7 +1136,11 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
             # (gateway was down and missed the window). Fast-forward to
             # the next future occurrence instead of firing a stale run.
             grace = _compute_grace_seconds(schedule)
-            if kind in {"cron", "interval"} and (now - next_run_dt).total_seconds() > grace:
+            if (
+                kind in {"cron", "interval"}
+                and (now - next_run_dt).total_seconds() > grace
+                and not job.get("catch_up", False)
+            ):
                 # Job is past its catch-up grace window — this is a stale missed run.
                 # Grace scales with schedule period: daily=2h, hourly=30m, 10min=5m.
                 new_next = compute_next_run(schedule, now.isoformat())

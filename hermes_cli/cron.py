@@ -117,6 +117,8 @@ def cron_list(show_all: bool = False):
             print(f"    Script:    {script}")
         if job.get("no_agent"):
             print(f"    Mode:      {color('no-agent', Colors.DIM)} (script stdout delivered directly)")
+        if job.get("catch_up"):
+            print("    Catch-up:  run once after missed occurrences")
         workdir = job.get("workdir")
         if workdir:
             print(f"    Workdir:   {workdir}")
