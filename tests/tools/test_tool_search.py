@@ -85,7 +85,7 @@ class TestConfigParsing:
     def test_defer_defaults_to_the_curated_event_triggered_surface(self):
         from tools.tool_search import ToolSearchConfig
         cfg = ToolSearchConfig.from_raw(None)
-        assert {"todo", "session_search", "clarify"} <= cfg.effective_defer_tools
+        assert {"todo", "session_search", "clarify", "skill_manage"} <= cfg.effective_defer_tools
         assert "terminal" not in cfg.effective_defer_tools
 
     def test_empty_defer_override_restores_eager_core_tools(self):
@@ -94,13 +94,13 @@ class TestConfigParsing:
 
 
 # ---------------------------------------------------------------------------
-# Classification — the hard invariant: core tools NEVER defer.
+# Classification — core tools defer only when explicitly curated.
 # ---------------------------------------------------------------------------
 
 
 class TestClassification:
     def test_core_tools_never_defer(self):
-        """The critical invariant from the OpenClaw report."""
+        """Without a curated set, core tools remain direct."""
         from tools.tool_search import is_deferrable_tool_name
         # Sample of core tools from _HERMES_CORE_TOOLS.
         for core_name in ["terminal", "read_file", "write_file", "patch",
@@ -254,14 +254,17 @@ class TestAssembly:
     def test_curated_core_tools_defer_behind_the_bridge(self):
         from tools.tool_search import assemble_tool_defs, ToolSearchConfig
         result = assemble_tool_defs(
-            [_td("terminal"), _td("todo"), _td("session_search"), _td("clarify")],
+            [
+                _td("terminal"), _td("todo"), _td("session_search"),
+                _td("clarify"), _td("skill_manage"),
+            ],
             context_length=200_000,
             config=ToolSearchConfig.from_raw({"enabled": "on"}),
         )
         names = {tool["function"]["name"] for tool in result.tool_defs}
         assert result.activated
         assert "terminal" in names
-        assert {"todo", "session_search", "clarify"}.isdisjoint(names)
+        assert {"todo", "session_search", "clarify", "skill_manage"}.isdisjoint(names)
         assert {"tool_search", "tool_describe", "tool_call"} <= names
 
     def test_empty_defer_override_keeps_curated_core_tools_direct(self):
@@ -389,6 +392,51 @@ class TestHandleFunctionCallIntegration:
         # Without a real registry, the matches will be empty, but the
         # dispatch path completed without error.
         assert "matches" in parsed or "error" in parsed
+
+    def test_deferred_skill_manage_is_discoverable_describable_and_callable(self):
+        import model_tools
+
+        searched = json.loads(model_tools.handle_function_call(
+            function_name="tool_search",
+            function_args={"query": "create update procedural skills"},
+            enabled_toolsets=["skills"],
+        ))
+        assert any(match["name"] == "skill_manage" for match in searched["matches"])
+
+        described = json.loads(model_tools.handle_function_call(
+            function_name="tool_describe",
+            function_args={"name": "skill_manage"},
+            enabled_toolsets=["skills"],
+        ))
+        assert described["name"] == "skill_manage"
+        assert "absorbed_into" in described["parameters"]["properties"]
+
+        # Invalid is a no-write probe that proves tool_call reached the real
+        # handler rather than being rejected by bridge resolution.
+        called = json.loads(model_tools.handle_function_call(
+            function_name="tool_call",
+            function_args={
+                "name": "skill_manage",
+                "arguments": {"action": "invalid", "name": "no-write-probe"},
+            },
+            enabled_toolsets=["skills"],
+        ))
+        assert called["success"] is False
+        assert "Unknown action 'invalid'" in called["error"]
+
+    def test_deferred_skill_manage_remains_closed_outside_skills_scope(self):
+        import model_tools
+
+        result = json.loads(model_tools.handle_function_call(
+            function_name="tool_call",
+            function_args={
+                "name": "skill_manage",
+                "arguments": {"action": "invalid", "name": "no-write-probe"},
+            },
+            enabled_toolsets=["session_search"],
+        ))
+        assert result["status"] == "out_of_scope"
+        assert "not available in this session" in result["error"]
 
 
 class TestRegression_OpenClawCron84141:

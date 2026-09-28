@@ -5,23 +5,22 @@ sidebar_position: 95
 
 # Tool Search
 
-When you have many MCP servers or non-core plugin tools attached to a
-session, their JSON schemas can consume a substantial fraction of the
-context window on every turn — even when only a few of them are relevant
-to what the user actually asked for.
+Tool schemas can consume a substantial fraction of the context window on
+every turn even when only a few are relevant. This includes large MCP and
+plugin surfaces plus built-in tools that are useful only after a specific
+event.
 
 **Tool Search** is Hermes' opt-in progressive-disclosure layer for that
-problem. When activated, MCP and plugin tools are replaced in the
-model-visible tools array by three bridge tools, and the model loads each
-specific tool's schema on demand.
+problem. When activated, MCP tools, non-core plugin tools, and a curated set
+of event-triggered built-ins are replaced in the model-visible tools array by
+three bridge tools. The model loads each specific schema on demand.
 
-:::info Built-in Hermes tools never defer
-The tools that make up Hermes' core capability set (`terminal`,
-`read_file`, `write_file`, `patch`, `search_files`, `todo`, `memory`,
-`browser_*`, `web_search`, `web_extract`, `clarify`, `execute_code`,
-`delegate_task`, `session_search`, `send_message`, and the rest of
-`_HERMES_CORE_TOOLS`) are *always* loaded directly. Only MCP tools and
-non-core plugin tools are eligible for deferral.
+:::info The normal working set stays direct
+High-frequency tools such as `terminal`, file operations, skill discovery,
+and `memory` remain directly visible. The default curated deferred set is
+`todo`, `session_search`, `clarify`, `process`, `cronjob`, `computer_use`,
+`image_generate`, `read_terminal`, and `skill_manage`. Session toolset scope
+still applies: deferral never grants a tool the session did not already have.
 :::
 
 ## How it works
@@ -55,17 +54,16 @@ see the underlying tool, not the bridge.
 
 ## When does it activate?
 
-By default Tool Search runs in `auto` mode: it activates only when the
-deferrable tool schemas would consume at least 10% of the active model's
-context window. Below that, the tools-array assembly is a pure
-pass-through and you pay no overhead.
+By default Tool Search runs in `auto` mode and activates whenever at least one
+deferrable tool is present. `on` currently has the same activation behavior;
+`auto` remains the compatibility default. `threshold_pct` is retained for
+configuration compatibility and future catalog budgeting.
 
 This decision is re-evaluated every time the tools array is built, so:
 
-- A session with just a few MCP tools and a long context model never
-  activates Tool Search.
-- A session with many MCP servers attached (15+ tools typically) starts
-  activating it.
+- A normal core session activates because its curated event-triggered tools
+  are deferred.
+- A session with many MCP tools avoids loading every MCP schema directly.
 - Removing MCP servers mid-session correctly returns to direct exposure
   on the next assembly.
 
@@ -75,17 +73,19 @@ This decision is re-evaluated every time the tools array is built, so:
 tools:
   tool_search:
     enabled: auto       # auto (default), on, or off
-    threshold_pct: 10   # percentage of context — only used in auto mode
+    threshold_pct: 10   # compatibility field; reserved for future budgeting
     search_default_limit: 5
     max_search_limit: 20
+    # defer: []          # optional explicit set; [] keeps all core tools direct
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `auto` | `auto` activates above threshold; `on` always activates if there's at least one deferrable tool; `off` disables entirely. |
-| `threshold_pct` | `10` | Percentage of context length at which `auto` mode kicks in. Range 0–100. |
+| `enabled` | `auto` | `auto` and `on` activate when at least one tool is deferrable; `off` disables Tool Search. |
+| `threshold_pct` | `10` | Compatibility field retained for future catalog budgeting. Range 0–100. |
 | `search_default_limit` | `5` | Hits returned when the model calls `tool_search` without a `limit`. |
 | `max_search_limit` | `20` | Hard upper bound the model can request via `limit`. Range 1–50. |
+| `defer` | curated set | Optional explicit list of built-in names to defer. `[]` restores direct exposure for every core tool. |
 
 You can also flip the legacy boolean shape:
 
@@ -102,8 +102,8 @@ describe → call) for the savings on the deferred schemas. It's a clear
 win when you have many tools and use few per turn; it's overhead when
 you have few tools total.
 
-The `auto` default handles this for you. If you set `enabled: on`
-unconditionally, expect a slight per-turn cost on small toolsets.
+Set `enabled: off` or `defer: []` when direct exposure is preferable for a
+small, fixed toolset.
 
 ## Trade-offs that don't go away
 

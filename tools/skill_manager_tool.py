@@ -1099,34 +1099,16 @@ def skill_manage(
 SKILL_MANAGE_SCHEMA = {
     "name": "skill_manage",
     "description": (
-        "Manage skills (create, update, delete). Skills are your procedural "
-        "memory — reusable approaches for recurring task types. "
-        f"New skills go to {display_hermes_home()}/skills/; existing skills can be modified wherever they live.\n\n"
-        "Actions: create (full SKILL.md + optional category), "
-        "patch (old_string/new_string — preferred for fixes), "
-        "edit (full SKILL.md rewrite — major overhauls only), "
-        "delete, write_file, remove_file.\n\n"
-        "On delete, pass `absorbed_into=<umbrella>` when you're merging this "
-        "skill's content into another one, or `absorbed_into=\"\"` when you're "
-        "pruning it with no forwarding target. This lets the curator tell "
-        "consolidation from pruning without guessing, so downstream consumers "
-        "(cron jobs that reference the old skill name, etc.) get updated "
-        "correctly. The target you name in `absorbed_into` must already "
-        "exist — create/patch the umbrella first, then delete.\n\n"
-        "Create when: complex task succeeded (5+ calls), errors overcome, "
-        "user-corrected approach worked, non-trivial workflow discovered, "
-        "or user asks you to remember a procedure.\n"
-        "Update when: instructions stale/wrong, OS-specific failures, "
-        "missing steps or pitfalls found during use. "
-        "If you used a skill and hit issues not covered by it, patch it immediately.\n\n"
-        "After difficult/iterative tasks, offer to save as a skill. "
-        "Skip for simple one-offs. Confirm with user before creating/deleting.\n\n"
-        "Good skills: trigger conditions, numbered steps with exact commands, "
-        "pitfalls section, verification steps. Use skill_view() to see format examples.\n\n"
-        "Pinned skills are protected from deletion only — skill_manage(action='delete') "
-        "will refuse with a message pointing the user to `hermes curator unpin <name>`. "
-        "Patches and edits go through on pinned skills so you can still improve them as "
-        "pitfalls come up; pin only guards against irrecoverable loss."
+        "Create and maintain reusable procedural skills. Prefer patch for fixes; "
+        "use edit only for full rewrites. Create after a complex successful "
+        "workflow, a corrected/error-recovery procedure, or an explicit request; "
+        "patch stale or incomplete instructions immediately. After difficult work, "
+        "offer to save the procedure; skip simple one-offs. Confirm before "
+        "create/delete. Good skills include triggers, exact steps, pitfalls, and "
+        "verification; inspect examples with skill_view. New skills go to "
+        f"{display_hermes_home()}/skills/. On delete, set absorbed_into to an "
+        "existing umbrella skill, or to an empty string for pruning. Pinned "
+        "skills may be patched/edited but cannot be deleted."
     ),
     "parameters": {
         "type": "object",
@@ -1139,52 +1121,43 @@ SKILL_MANAGE_SCHEMA = {
             "name": {
                 "type": "string",
                 "description": (
-                    "Skill name (lowercase, hyphens/underscores, max 64 chars). "
-                    "Must match an existing skill for patch/edit/delete/write_file/remove_file."
+                    "Lowercase skill name (max 64 chars). Must exist except for create."
                 )
             },
             "content": {
                 "type": "string",
                 "description": (
-                    "Full SKILL.md content (YAML frontmatter + markdown body). "
-                    "Required for 'create' and 'edit'. For 'edit', read the skill "
-                    "first with skill_view() and provide the complete updated text."
+                    "Full SKILL.md with YAML frontmatter; required for create/edit. "
+                    "Read the skill first before edit."
                 )
             },
             "old_string": {
                 "type": "string",
                 "description": (
-                    "Text to find in the file (required for 'patch'). Must be unique "
-                    "unless replace_all=true. Include enough surrounding context to "
-                    "ensure uniqueness."
+                    "Patch text to find; must be unique unless replace_all=true."
                 )
             },
             "new_string": {
                 "type": "string",
                 "description": (
-                    "Replacement text (required for 'patch'). Can be empty string "
-                    "to delete the matched text."
+                    "Patch replacement; may be empty to delete the match."
                 )
             },
             "replace_all": {
                 "type": "boolean",
-                "description": "For 'patch': replace all occurrences instead of requiring a unique match (default: false)."
+                "description": "Patch every match instead of requiring one unique match."
             },
             "category": {
                 "type": "string",
                 "description": (
-                    "Optional category/domain for organizing the skill (e.g., 'devops', "
-                    "'data-science', 'mlops'). Creates a subdirectory grouping. "
-                    "Only used with 'create'."
+                    "Optional create-only category subdirectory, e.g. devops."
                 )
             },
             "file_path": {
                 "type": "string",
                 "description": (
-                    "Path to a supporting file within the skill directory. "
-                    "For 'write_file'/'remove_file': required, must be under references/, "
-                    "templates/, scripts/, or assets/. "
-                    "For 'patch': optional, defaults to SKILL.md if omitted."
+                    "Supporting path under references/, templates/, scripts/, or assets/. "
+                    "Required for write_file/remove_file; patch defaults to SKILL.md."
                 )
             },
             "file_content": {
@@ -1194,15 +1167,8 @@ SKILL_MANAGE_SCHEMA = {
             "absorbed_into": {
                 "type": "string",
                 "description": (
-                    "For 'delete' only — declares intent so the curator can "
-                    "tell consolidation from pruning without guessing. "
-                    "Pass the umbrella skill name when this skill's content "
-                    "was merged into another (the target must already exist). "
-                    "Pass an empty string when the skill is truly stale and "
-                    "being pruned with no forwarding target. Omitting the arg "
-                    "on delete is supported for backward compatibility but "
-                    "downstream tooling (e.g. cron-job skill reference "
-                    "rewriting) will have to guess at intent."
+                    "Delete intent: existing umbrella name after a merge, or empty "
+                    "string for pruning. Enables downstream reference updates."
                 )
             },
         },

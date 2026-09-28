@@ -1,14 +1,15 @@
 """Progressive tool disclosure ("tool search") for Hermes Agent.
 
-When enabled, MCP and non-core plugin tools are replaced in the model-visible
-tools array by three bridge tools — ``tool_search``, ``tool_describe``,
-``tool_call`` — and surfaced on demand. Core Hermes tools never defer.
+When enabled, MCP tools, non-core plugin tools, and a small curated set of
+event-triggered core tools are replaced in the model-visible tools array by
+three bridge tools — ``tool_search``, ``tool_describe``, ``tool_call`` — and
+surfaced on demand.
 
 Design constraints this module is built around (see ``openclaw-tool-search-report``
 for the full rationale):
 
-* Core tools defined in ``toolsets._HERMES_CORE_TOOLS`` are *never* deferred.
-  Always-load means always-load. No exceptions.
+* Core tools defined in ``toolsets._HERMES_CORE_TOOLS`` stay direct unless
+  explicitly named in the configured curated defer set.
 * The threshold gate runs every assembly: when deferrable tools would consume
   less than ``threshold_pct`` of the model's context window (default 10%),
   tool search is a no-op and the tools array passes through unchanged.
@@ -190,9 +191,9 @@ def _core_tool_names() -> frozenset[str]:
 
 _DEFAULT_DEFERRED_TOOLS = frozenset({
     # These are useful only after a user asks for a specific action. Keep the
-    # normal working set (terminal/files/skills/memory) direct every turn.
+    # normal working set (terminal/files/skill discovery/memory) direct.
     "todo", "session_search", "clarify", "process", "cronjob",
-    "computer_use", "image_generate", "read_terminal",
+    "computer_use", "image_generate", "read_terminal", "skill_manage",
 })
 
 

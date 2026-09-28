@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from tools.skill_manager_tool import (
+    SKILL_MANAGE_SCHEMA,
     _validate_name,
     _validate_category,
     _validate_frontmatter,
@@ -21,6 +22,19 @@ from tools.skill_manager_tool import (
     skill_manage,
     MAX_NAME_LENGTH,
 )
+
+
+def test_skill_manage_schema_stays_compact_without_losing_its_safety_contract():
+    encoded = json.dumps(SKILL_MANAGE_SCHEMA, ensure_ascii=False, separators=(",", ":"))
+    properties = SKILL_MANAGE_SCHEMA["parameters"]["properties"]
+
+    assert len(encoded) <= 3000
+    assert SKILL_MANAGE_SCHEMA["parameters"]["required"] == ["action", "name"]
+    assert set(properties["action"]["enum"]) == {
+        "create", "patch", "edit", "delete", "write_file", "remove_file",
+    }
+    assert "absorbed_into" in properties
+    assert "references/" in properties["file_path"]["description"]
 
 
 @contextmanager

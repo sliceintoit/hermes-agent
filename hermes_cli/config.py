@@ -2222,22 +2222,15 @@ DEFAULT_CONFIG = {
     # in the model-facing tools array with three bridge tools —
     # tool_search / tool_describe / tool_call — and surfaced on demand.
     #
-    # Core Hermes tools (terminal, read_file, write_file, patch,
-    # search_files, todo, memory, browser_*, etc.) are NEVER deferred.
-    # See tools/tool_search.py for full design notes and the
-    # openclaw-tool-search-report PDF in this PR for the rationale.
+    # Core tools stay direct unless named in Tool Search's curated defer set.
+    # See tools/tool_search.py for the default set and design notes.
     "tools": {
         "tool_search": {
-            # "auto" (default) — activate only when deferrable tool schemas
-            #   exceed ``threshold_pct`` of the active model's context length,
-            #   so small toolsets pay no overhead.
-            # "on"  — always activate when there is at least one deferrable
-            #   tool. Use when you have many MCP servers and want maximum
-            #   token reduction unconditionally.
+            # "auto" / "on" — activate when at least one deferrable tool is
+            #   present. "auto" remains the compatibility default.
             # "off" — disable entirely. Tools-array assembly is a pass-through.
             "enabled": "auto",
-            # Percentage of context length at which "auto" mode kicks in.
-            # 10 matches the Claude Code default. Range 0..100.
+            # Retained for config compatibility and future catalog budgeting.
             "threshold_pct": 10,
             # When the model calls tool_search without a ``limit`` argument,
             # how many hits to return. Range 1..max_search_limit.

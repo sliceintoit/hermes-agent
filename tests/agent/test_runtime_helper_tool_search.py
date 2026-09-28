@@ -69,3 +69,8 @@ def test_executor_scope_excludes_ungranted_curated_tools():
     names = _tool_search_scoped_names(_agent(["session_search"]))
 
     assert "clarify" not in names
+
+
+def test_executor_scope_includes_deferred_skill_manage_only_when_granted():
+    assert "skill_manage" in _tool_search_scoped_names(_agent(["skills"]))
+    assert "skill_manage" not in _tool_search_scoped_names(_agent(["session_search"]))
