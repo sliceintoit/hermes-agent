@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent.agent_runtime_helpers import invoke_tool
+from agent.tool_executor import _tool_search_scoped_names
 
 
 def _agent(enabled_toolsets):
@@ -56,3 +57,15 @@ def test_invoke_tool_keeps_deferred_tool_scope_closed():
     ))
 
     assert "not available in this session" in result["error"]
+
+
+def test_executor_scope_includes_curated_deferred_core_tools():
+    names = _tool_search_scoped_names(_agent(["session_search"]))
+
+    assert "session_search" in names
+
+
+def test_executor_scope_excludes_ungranted_curated_tools():
+    names = _tool_search_scoped_names(_agent(["session_search"]))
+
+    assert "clarify" not in names
