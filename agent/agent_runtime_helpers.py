@@ -1724,6 +1724,43 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
     if not isinstance(function_args, dict):
         function_args = {}
 
+    # Tool Search normally unwraps ``tool_call`` in agent/tool_executor.py.
+    # Some runtimes invoke this helper directly, though, so repeat the unwrap
+    # here before agent-loop tools are selected.  Otherwise deferred tools
+    # such as session_search fall through to model_tools, which intentionally
+    # rejects them because they require this live agent's state.
+    try:
+        from tools import tool_search as _ts
+        if function_name == _ts.TOOL_CALL_NAME:
+            config = _ts.load_config_readonly()
+            underlying, underlying_args, err = _ts.resolve_underlying_call(
+                function_args, config.effective_defer_tools
+            )
+            if not err and underlying:
+                import model_tools
+                current_defs = model_tools.get_tool_definitions(
+                    enabled_toolsets=getattr(agent, "enabled_toolsets", None),
+                    disabled_toolsets=getattr(agent, "disabled_toolsets", None),
+                    quiet_mode=True,
+                    skip_tool_search_assembly=True,
+                ) or []
+                scoped_names = _ts.scoped_deferrable_names(
+                    current_defs, config.effective_defer_tools
+                )
+                if underlying not in scoped_names:
+                    return json.dumps(_ts.unavailable_tool_result(
+                        underlying,
+                        current_defs,
+                        getattr(agent, "enabled_toolsets", None),
+                        getattr(agent, "disabled_toolsets", None),
+                    ), ensure_ascii=False)
+                function_name = underlying
+                function_args = underlying_args
+    except Exception:
+        # Preserve the bridge's existing diagnostic path if unwrapping itself
+        # fails; model_tools.handle_function_call will return a useful error.
+        pass
+
     _tool_middleware_trace = list(tool_request_middleware_trace or [])
     try:
         from hermes_cli.middleware import apply_tool_request_middleware
