@@ -1427,6 +1427,8 @@ class MCPServerTask:
 
     async def _run_stdio(self, config: dict):
         """Run the server using stdio transport."""
+        from hermes_cli.extension_gate import deny_local_mcp
+        deny_local_mcp()
         if not _MCP_AVAILABLE:
             raise ImportError(
                 f"MCP server '{self.name}' requires the 'mcp' Python SDK, but "
@@ -1952,6 +1954,12 @@ class MCPServerTask:
                 raise
             except Exception as exc:
                 self.session = None
+                from hermes_cli.extension_gate import ExtensionDenied
+                if isinstance(exc, ExtensionDenied):
+                    self._error = exc
+                    self._ready.set()
+                    logger.warning("MCP extension denied (not retrying): %s", exc)
+                    return
 
                 # If this is the first connection attempt, retry with backoff
                 # before giving up. A transient DNS/network blip at startup

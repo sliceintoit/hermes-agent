@@ -1604,6 +1604,8 @@ class PluginManager:
         future ``tts/openai``.
         """
         plugin_dir = Path(manifest.path)  # type: ignore[arg-type]
+        from hermes_cli.extension_gate import require_directory
+        require_directory(plugin_dir)
         init_file = plugin_dir / "__init__.py"
         if not init_file.exists():
             raise FileNotFoundError(f"No __init__.py in {plugin_dir}")
@@ -1635,6 +1637,8 @@ class PluginManager:
 
     def _load_entrypoint_module(self, manifest: PluginManifest) -> types.ModuleType:
         """Load a pip-installed plugin via its entry-point reference."""
+        from hermes_cli.extension_gate import deny_entrypoint
+        deny_entrypoint()
         eps = importlib.metadata.entry_points()
         if hasattr(eps, "select"):
             group_eps = eps.select(group=ENTRY_POINTS_GROUP)

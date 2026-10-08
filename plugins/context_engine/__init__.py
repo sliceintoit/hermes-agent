@@ -105,6 +105,12 @@ def _load_engine_from_dir(engine_dir: Path) -> Optional["ContextEngine"]:
     - A top-level class that extends ContextEngine — we instantiate it
     """
     name = engine_dir.name
+    from hermes_cli.extension_gate import require_directory, ExtensionDenied
+    try:
+        require_directory(engine_dir)
+    except ExtensionDenied as exc:
+        logger.warning("Context extension denied: %s", exc)
+        return None
     module_name = f"plugins.context_engine.{name}"
     init_file = engine_dir / "__init__.py"
 

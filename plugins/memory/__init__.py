@@ -213,6 +213,12 @@ def _load_provider_from_dir(provider_dir: Path) -> Optional["MemoryProvider"]:
     - A top-level class that extends MemoryProvider — we instantiate it
     """
     name = provider_dir.name
+    from hermes_cli.extension_gate import require_directory, ExtensionDenied
+    try:
+        require_directory(provider_dir)
+    except ExtensionDenied as exc:
+        logger.warning("Memory extension denied: %s", exc)
+        return None
     # Use a separate namespace for user-installed plugins so they don't
     # collide with bundled providers in sys.modules.
     _is_bundled = _MEMORY_PLUGINS_DIR in provider_dir.parents or provider_dir.parent == _MEMORY_PLUGINS_DIR
@@ -383,6 +389,12 @@ def discover_plugin_cli_commands() -> List[dict]:
 
     cli_file = plugin_dir / "cli.py"
     if not cli_file.exists():
+        return results
+    from hermes_cli.extension_gate import require_directory, ExtensionDenied
+    try:
+        require_directory(plugin_dir)
+    except ExtensionDenied as exc:
+        logger.warning("Memory CLI extension denied: %s", exc)
         return results
 
     _is_bundled = _MEMORY_PLUGINS_DIR in plugin_dir.parents or plugin_dir.parent == _MEMORY_PLUGINS_DIR

@@ -808,6 +808,12 @@ class TestDiscoverAndRegister:
 # ---------------------------------------------------------------------------
 
 class TestMCPServerTask:
+    @pytest.fixture(autouse=True)
+    def _transport_unit_policy_seam(self, monkeypatch):
+        # These mocked-transport tests exercise lifecycle mechanics, not trust.
+        # Real pre-launch denial is tested without this seam in test_extension_gate.
+        monkeypatch.setattr('hermes_cli.extension_gate.deny_local_mcp', lambda: None)
+
     """Test the MCPServerTask lifecycle with mocked MCP SDK."""
 
     def _mock_stdio_and_session(self, session):
@@ -1554,7 +1560,8 @@ class TestHTTPConfig:
 
         async def _test():
             with patch("tools.mcp_tool._MCP_AVAILABLE", False):
-                with pytest.raises(ImportError, match=r"mcp.*SDK"):
+                from hermes_cli.extension_gate import ExtensionDenied
+                with pytest.raises(ExtensionDenied, match="local MCP execution"):
                     await server._run_stdio(config)
 
         asyncio.run(_test())

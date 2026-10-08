@@ -107,6 +107,12 @@ def _import_plugin_dir(plugin_dir: Path, source: str) -> None:
     init_file = plugin_dir / "__init__.py"
     if not init_file.exists():
         return
+    from hermes_cli.extension_gate import require_directory, ExtensionDenied
+    try:
+        require_directory(plugin_dir)
+    except ExtensionDenied as exc:
+        logger.warning("Provider extension denied: %s", exc)
+        return
 
     # Give bundled plugins a stable import path (``plugins.model_providers.<name>``)
     # so relative imports within the plugin work. User plugins load via
