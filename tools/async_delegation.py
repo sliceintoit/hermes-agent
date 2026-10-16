@@ -336,6 +336,9 @@ def _push_completion_event(
         "summary": summary,
         "error": error,
         "api_calls": result.get("api_calls", 0),
+        "tool_calls": result.get("tool_calls", 0),
+        "tools_used": result.get("tools_used") or {},
+        "tool_errors": result.get("tool_errors", 0),
         "duration_seconds": result.get(
             "duration_seconds", round(completed_at - dispatched_at, 2)
         ),

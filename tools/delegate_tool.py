@@ -347,6 +347,26 @@ def _looks_like_error_output(content: Any) -> bool:
     )
 
 
+def _summarize_tool_trace(tool_trace: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return framework-authoritative tool counts for a completed child run.
+
+    Child prose is not trusted for usage accounting. Counts come from the
+    assistant tool-call messages already paired into ``tool_trace``.
+    """
+    tools_used: Dict[str, int] = {}
+    tool_errors = 0
+    for item in tool_trace:
+        name = str(item.get("tool") or "unknown")
+        tools_used[name] = tools_used.get(name, 0) + 1
+        if item.get("status") == "error":
+            tool_errors += 1
+    return {
+        "tool_calls": len(tool_trace),
+        "tools_used": tools_used,
+        "tool_errors": tool_errors,
+    }
+
+
 def _normalize_role(r: Optional[str]) -> str:
     """Normalise a caller-provided role to 'leaf' or 'orchestrator'.
 
@@ -1859,6 +1879,8 @@ def _run_single_child(
         _output_tokens = getattr(child, "session_completion_tokens", 0)
         _model = getattr(child, "model", None)
 
+        tool_metrics = _summarize_tool_trace(tool_trace)
+
         entry: Dict[str, Any] = {
             "task_index": task_index,
             "status": status,
@@ -1876,6 +1898,7 @@ def _run_single_child(
                 ),
             },
             "tool_trace": tool_trace,
+            **tool_metrics,
             # Captured before the finally block calls child.close() so the
             # parent thread can fire subagent_stop with the correct role.
             # Stripped before the dict is serialised back to the model.

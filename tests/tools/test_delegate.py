@@ -29,6 +29,7 @@ from tools.delegate_tool import (
     _build_child_progress_callback,
     _build_child_system_prompt,
     _extract_output_tail,
+    _summarize_tool_trace,
     _strip_blocked_tools,
     _resolve_child_credential_pool,
     _resolve_delegation_credentials,
@@ -548,12 +549,32 @@ class TestDelegateObservability(unittest.TestCase):
             self.assertEqual(entry["tokens"]["input"], 5000)
             self.assertEqual(entry["tokens"]["output"], 1200)
 
-            # Tool trace
+            # Tool trace and framework-computed telemetry
             self.assertEqual(len(entry["tool_trace"]), 1)
             self.assertEqual(entry["tool_trace"][0]["tool"], "web_search")
             self.assertIn("args_bytes", entry["tool_trace"][0])
             self.assertIn("result_bytes", entry["tool_trace"][0])
             self.assertEqual(entry["tool_trace"][0]["status"], "ok")
+            self.assertEqual(entry["tool_calls"], 1)
+            self.assertEqual(entry["tools_used"], {"web_search": 1})
+            self.assertEqual(entry["tool_errors"], 0)
+
+    def test_tool_trace_summary_is_objective_and_counts_parallel_calls(self):
+        trace = [
+            {"tool": "read_file", "status": "ok"},
+            {"tool": "read_file", "status": "ok"},
+            {"tool": "terminal", "status": "error"},
+            {"tool": "unknown"},
+        ]
+
+        self.assertEqual(
+            _summarize_tool_trace(trace),
+            {
+                "tool_calls": 4,
+                "tools_used": {"read_file": 2, "terminal": 1, "unknown": 1},
+                "tool_errors": 1,
+            },
+        )
 
     def test_tool_trace_handles_list_content_blocks(self):
         """Tool-result content blocks should not crash observability metadata."""

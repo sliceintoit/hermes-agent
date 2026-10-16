@@ -94,7 +94,10 @@ def test_async_executor_workers_are_daemon_threads():
 def test_completion_event_lands_on_shared_queue_with_session_key():
     def runner():
         return {"status": "completed", "summary": "the result",
-                "api_calls": 3, "duration_seconds": 2.0, "model": "test-model"}
+                "api_calls": 3, "tool_calls": 4,
+                "tools_used": {"read_file": 3, "terminal": 1},
+                "tool_errors": 1,
+                "duration_seconds": 2.0, "model": "test-model"}
 
     res = ad.dispatch_async_delegation(
         goal="compute X", context="some context", toolsets=["web", "file"],
@@ -109,12 +112,18 @@ def test_completion_event_lands_on_shared_queue_with_session_key():
     assert evt["summary"] == "the result"
     assert evt["session_key"] == "agent:main:cli:dm:local"
     assert evt["delegation_id"] == res["delegation_id"]
+    assert evt["tool_calls"] == 4
+    assert evt["tools_used"] == {"read_file": 3, "terminal": 1}
+    assert evt["tool_errors"] == 1
 
 
 def test_rich_reinjection_block_is_self_contained():
     def runner():
         return {"status": "completed", "summary": "The answer is 42.",
-                "api_calls": 7, "duration_seconds": 3.5, "model": "test-model"}
+                "api_calls": 7, "tool_calls": 5,
+                "tools_used": {"web_search": 4, "read_file": 1},
+                "tool_errors": 0,
+                "duration_seconds": 3.5, "model": "test-model"}
 
     ad.dispatch_async_delegation(
         goal="Compute the meaning of life",
@@ -134,6 +143,9 @@ def test_rich_reinjection_block_is_self_contained():
         "The answer is 42.",
         "Status: completed",
         "API calls: 7",
+        "Tool calls: 5",
+        "Tools used: read_file=1, web_search=4",
+        "Tool errors: 0",
     ]:
         assert needle in text, f"missing {needle!r}"
 

@@ -1645,6 +1645,9 @@ def _format_async_delegation(evt: dict) -> str:
     summary = evt.get("summary")
     error = evt.get("error")
     api_calls = evt.get("api_calls", 0)
+    tool_calls = evt.get("tool_calls", 0)
+    tools_used = evt.get("tools_used") or {}
+    tool_errors = evt.get("tool_errors", 0)
     duration = evt.get("duration_seconds", "?")
     dispatched_at = evt.get("dispatched_at")
     completed_at = evt.get("completed_at") or _time.time()
@@ -1696,6 +1699,10 @@ def _format_async_delegation(evt: dict) -> str:
             header += f"  (status={r_status}"
             if r.get("api_calls"):
                 header += f", api_calls={r['api_calls']}"
+            if r.get("tool_calls") is not None:
+                header += f", tool_calls={r.get('tool_calls', 0)}"
+            if r.get("tool_errors"):
+                header += f", tool_errors={r['tool_errors']}"
             if r.get("duration_seconds") is not None:
                 header += f", {r['duration_seconds']}s"
             header += ") ---"
@@ -1738,6 +1745,13 @@ def _format_async_delegation(evt: dict) -> str:
     if live_transcripts:
         lines.append("Live transcripts: " + ", ".join(live_transcripts))
     lines.append(f"Status: {status}   API calls: {api_calls}   Duration: {duration}s")
+    lines.append(f"Tool calls: {tool_calls}")
+    if tools_used:
+        tool_usage = ", ".join(
+            f"{name}={count}" for name, count in sorted(tools_used.items())
+        )
+        lines.append(f"Tools used: {tool_usage}")
+    lines.append(f"Tool errors: {tool_errors}")
     lines.append("--- RESULT ---")
     if status in ("completed", "success") and summary:
         lines.append(summary)
