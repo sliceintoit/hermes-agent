@@ -327,15 +327,18 @@ class MemoryStore:
 
             if new_total > limit:
                 current = self._char_count(target)
+                max_content_chars = max(0, limit - current - (len(ENTRY_DELIMITER) if entries else 0))
                 return {
                     "success": False,
                     "error": (
                         f"Memory at {current:,}/{limit:,} chars. "
                         f"Adding this entry ({len(content)} chars) would exceed the limit. "
-                        f"Consolidate now: use 'replace' to merge overlapping entries into "
-                        f"shorter ones or 'remove' stale or less important entries (see "
-                        f"current_entries below), then retry this add — all in this turn."
+                        f"This add can contain at most {max_content_chars:,} chars (separator included in budget). "
+                        f"Consolidate before retrying; count len(content.strip()) with code. "
+                        f"Preserve unrelated, still-valid facts and preferences; never silently "
+                        f"truncate or delete them just to fit."
                     ),
+                    "max_content_chars": max_content_chars,
                     "current_entries": entries,
                     "usage": f"{current:,}/{limit:,}",
                 }
@@ -393,14 +396,17 @@ class MemoryStore:
 
             if new_total > limit:
                 current = self._char_count(target)
+                max_content_chars = max(0, limit - current + len(entries[idx]))
                 return {
                     "success": False,
                     "error": (
                         f"Replacement would put memory at {new_total:,}/{limit:,} chars. "
-                        f"Shorten the new content, or 'remove' other stale or less important "
-                        f"entries to make room (see current_entries below), then retry — all "
-                        f"in this turn."
+                        f"This replacement can contain at most {max_content_chars:,} chars. "
+                        f"Count len(content.strip()) with code before retrying. Preserve all "
+                        f"still-valid facts and preferences in the matched entry, including "
+                        f"unrelated ones; never silently truncate or delete them just to fit."
                     ),
+                    "max_content_chars": max_content_chars,
                     "current_entries": entries,
                     "usage": f"{current:,}/{limit:,}",
                 }
@@ -760,6 +766,10 @@ MEMORY_SCHEMA = {
         "- 'memory': your notes -- environment facts, project conventions, tool quirks, lessons learned\n\n"
         "ACTIONS: add (new entry), replace (update existing -- old_text identifies it), "
         "remove (delete -- old_text identifies it).\n\n"
+        "CAPACITY: Near the shown limit, consolidate before adding. Count len(content.strip()) "
+        "with code before writing; overflow errors give max_content_chars for that operation. "
+        "Preserve all still-valid facts/preferences in a replaced entry, including unrelated ones. "
+        "Never silently truncate or delete memories just to fit.\n\n"
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state."
     ),
     "parameters": {

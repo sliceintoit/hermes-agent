@@ -134,19 +134,35 @@ When you try to add an entry that would exceed the limit, the tool returns an er
 ```json
 {
   "success": false,
-  "error": "Memory at 2,100/2,200 chars. Adding this entry (250 chars) would exceed the limit. Consolidate now: use 'replace' to merge overlapping entries into shorter ones or 'remove' stale or less important entries (see current_entries below), then retry this add — all in this turn.",
+  "error": "Memory at 2,100/2,200 chars. Adding this entry (250 chars) would exceed the limit. This add can contain at most 97 chars (separator included in budget). Consolidate before retrying; count len(content.strip()) with code. Preserve unrelated, still-valid facts and preferences; never silently truncate or delete them just to fit.",
+  "max_content_chars": 97,
   "current_entries": ["..."],
   "usage": "2,100/2,200"
 }
 ```
 
-The agent should then:
-1. Read the current entries (shown in the error response)
-2. Identify entries that can be removed or consolidated
-3. Use `replace` to merge related entries into shorter versions
-4. Then `add` the new entry
+`max_content_chars` is the maximum length of the stripped content for the
+**attempted operation**, calculated from live state under the write lock. For an
+`add`, it accounts for the three-character entry separator when needed. For a
+`replace`, it credits the full matched entry, not just the `old_text` substring.
+Zero means no nonempty content currently fits. Another writer can change the
+budget before a retry; writes are always revalidated.
 
-**Best practice:** When memory is above 80% capacity (visible in the system prompt header), consolidate entries before adding new ones. For example, merge three separate "project uses X" entries into one comprehensive project description entry.
+The agent should then:
+1. Read the current entries shown in the response.
+2. Consolidate wording while preserving all still-valid facts and preferences,
+   including unrelated facts within the entry being replaced.
+3. Calculate `len(content.strip())` with code before retrying; do not guess.
+4. Retry with content within the reported budget, or make room through a
+   deliberate consolidation first. Never silently truncate or delete memories
+   merely to fit a new fact. Removal is for obsolete/duplicate information or
+   an explicit user request, not automatic capacity recovery.
+
+**Best practice:** Near the shown limit, consolidate before adding, not after a
+predictably oversized write. A rejected write leaves the entries and frozen
+system-prompt snapshot unchanged. This guidance does not add automatic semantic
+compression: preserving the meaning of an agent-authored rewrite still requires
+careful review.
 
 ### Practical Examples of Good Memory Entries
 
