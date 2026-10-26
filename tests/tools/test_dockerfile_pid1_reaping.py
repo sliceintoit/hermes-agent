@@ -140,8 +140,8 @@ def test_dockerfile_entrypoint_routes_through_the_init(dockerfile_text):
     )
 
 
-def test_dockerfile_installs_tui_dependencies(dockerfile_text):
-    # The TUI workspace manifests must be present so ``npm install`` can
+def test_dockerfile_installs_tui_dependencies_reproducibly(dockerfile_text):
+    # The TUI workspace manifests must be present so ``npm ci`` can
     # resolve dependencies. The bundled ``hermes-ink`` workspace package is
     # now COPIED into the image as a whole tree (not just its lockfile)
     # because it's referenced as a ``file:`` workspace dependency from
@@ -152,9 +152,14 @@ def test_dockerfile_installs_tui_dependencies(dockerfile_text):
     assert "ui-tui/package.json" in dockerfile_text
     assert "ui-tui/packages/hermes-ink/" in dockerfile_text
     assert "package-lock.json" in dockerfile_text
-    assert any(
-        "npm" in step and (" install" in step or " ci" in step)
-        for step in _run_steps(dockerfile_text)
+    dependency_steps = [
+        step for step in _run_steps(dockerfile_text)
+        if "npm ci" in step or "npm install" in step
+    ]
+    assert dependency_steps, "Dockerfile must install npm dependencies"
+    assert all("npm ci" in step for step in dependency_steps), (
+        "Docker build dependency installation must use npm ci so the root "
+        "lockfile is enforced"
     )
 
 
