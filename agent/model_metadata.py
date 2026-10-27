@@ -1425,6 +1425,9 @@ def _query_anthropic_context_length(model: str, base_url: str, api_key: str) -> 
 # Used as a fallback when the live probe fails (no token, network error).
 # Longest keys first so substring match picks the most specific entry.
 _CODEX_OAUTH_CONTEXT_FALLBACK: Dict[str, int] = {
+    # Observed Codex defaults, not the larger optional max_context_window.
+    "gpt-6.1-sol": 500_000,
+    "gpt-6.1-terra": 500_000,
     "gpt-5.1-codex-max": 272_000,
     "gpt-5.1-codex-mini": 272_000,
     "gpt-5.3-codex": 272_000,
@@ -1445,7 +1448,7 @@ _CODEX_OAUTH_CONTEXT_FALLBACK: Dict[str, int] = {
 
 _codex_oauth_context_cache: Dict[str, int] = {}
 _codex_oauth_context_cache_time: float = 0.0
-_CODEX_OAUTH_CONTEXT_CACHE_TTL = 3600  # 1 hour
+_CODEX_OAUTH_CONTEXT_CACHE_TTL = 300  # 5 minutes
 
 
 def _fetch_codex_oauth_context_lengths(access_token: str) -> Dict[str, int]:
@@ -1618,9 +1621,9 @@ def get_model_context_length(
 
     Resolution order:
     0. Explicit config override (model.context_length or custom_providers per-model)
-    1. Persistent cache (previously discovered via probing).  Nous URLs
-       bypass the cache here so step 5b can always reconcile against
-       the authoritative portal /v1/models response.
+    1. Persistent cache (previously discovered via probing). Codex and Nous
+       bypass disk snapshots so provider-aware lookups can reconcile against
+       authoritative metadata, with short-lived in-memory probe caches.
     1b. AWS Bedrock static table (must precede custom-endpoint probe)
     2. Active endpoint metadata (/models for explicit custom endpoints)
     3. Local server query (for local endpoints)
@@ -1664,6 +1667,15 @@ def get_model_context_length(
     # local servers actually know about.  Ollama "model:tag" colons are preserved.
     model = _strip_provider_prefix(model)
 
+    # Some consumers pass a generic provider label with the Codex URL.
+    # Normalize before both cache handling and provider-aware resolution.
+    if provider == "codex" or (
+        provider in {"", "auto", "custom", "openai", "openrouter"}
+        and base_url_host_matches(base_url, "chatgpt.com")
+        and urlparse(base_url).path.startswith("/backend-api/codex")
+    ):
+        provider = "openai-codex"
+
     # 1. Check persistent cache (model+provider)
     # LM Studio is excluded — its loaded context length is transient (the
     # user can reload the model with a different context_length at any time
@@ -1671,19 +1683,14 @@ def get_model_context_length(
     if base_url and provider != "lmstudio":
         cached = get_cached_context_length(model, base_url)
         if cached is not None:
-            # Invalidate stale Codex OAuth cache entries: pre-PR #14935 builds
-            # resolved gpt-5.x to the direct-API value (e.g. 1.05M) via
-            # models.dev and persisted it. Codex OAuth caps at 272K for every
-            # slug, so any cached Codex entry at or above 400K is a leftover
-            # from the old resolution path. Drop it and fall through to the
-            # live /models probe in step 5 below.
-            if provider == "openai-codex" and cached >= 400_000:
-                logger.info(
-                    "Dropping stale Codex cache entry %s@%s -> %s (pre-fix value); "
-                    "re-resolving via live /models probe",
-                    model, base_url, f"{cached:,}",
+            # Any Codex snapshot can be stale, even a plausible small value.
+            # Reconcile through the live /models probe below; its in-memory
+            # cache amortizes requests without freezing disk values forever.
+            if provider == "openai-codex":
+                logger.debug(
+                    "Bypassing persistent Codex context snapshot for %s@%s",
+                    model, base_url,
                 )
-                _invalidate_cached_context_length(model, base_url)
             # Invalidate stale 32k cache entries for Kimi-family models.
             elif cached <= 32768 and _model_name_suggests_kimi(model):
                 logger.info(
@@ -1867,11 +1874,13 @@ def get_model_context_length(
         # Codex OAuth enforces lower context limits than the direct OpenAI
         # API for the same slug (e.g. gpt-5.5 is 1.05M on the API but 272K
         # on Codex). Authoritative source is Codex's own /models endpoint.
-        codex_ctx = _resolve_codex_oauth_context_length(model, access_token=api_key or "")
-        if codex_ctx:
-            if base_url:
-                save_context_length(model, base_url, codex_ctx)
-            return codex_ctx
+        # Never borrow direct-API/catalog limits when Codex metadata is down.
+        codex_ctx = _resolve_codex_oauth_context_length(
+            model, access_token=api_key or ""
+        ) or DEFAULT_FALLBACK_CONTEXT
+        if base_url:
+            save_context_length(model, base_url, codex_ctx)
+        return codex_ctx
     if effective_provider == "gmi" and base_url:
         # GMI exposes authoritative context_length via /models, but it is not
         # in models.dev yet. Preserve that higher-fidelity endpoint lookup.
@@ -2030,16 +2039,26 @@ def _count_image_tokens(msg: Dict[str, Any], cost_per_image: int) -> int:
 
 
 def _estimate_message_chars(msg: Dict[str, Any]) -> int:
-    """Char count for token estimation, excluding base64 image data.
+    """Char count for token estimation, excluding opaque transport data.
 
-    Base64 images are counted via `_count_image_tokens` instead; including
-    their raw chars here would massively overestimate token usage.
+    Base64 images are counted via `_count_image_tokens` instead. Codex
+    encrypted reasoning is replay state, not ordinary text; counting its
+    ciphertext at four chars/token can trigger premature compression.
     """
     if not isinstance(msg, dict):
         return len(str(msg))
     shadow: Dict[str, Any] = {}
     for k, v in msg.items():
         if k == "_anthropic_content_blocks":
+            continue
+        if k == "codex_reasoning_items" and isinstance(v, list):
+            # Shallow estimation-only copies: never stringify the ciphertext
+            # or mutate the original objects replayed to the provider.
+            shadow[k] = [
+                {key: value for key, value in item.items() if key != "encrypted_content"}
+                if isinstance(item, dict) else item
+                for item in v
+            ]
             continue
         if k == "content":
             if isinstance(v, list):

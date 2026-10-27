@@ -187,6 +187,50 @@ def test_no_review_when_memory_disabled():
     assert ctx.should_review_memory is False
 
 
+@pytest.mark.parametrize("large_prompt", [False, True])
+def test_preflight_counts_prompt_text_not_codex_ciphertext(large_prompt):
+    """Opaque replay data must not trigger compression; real prompt growth must."""
+    from agent.context_compressor import ContextCompressor
+
+    agent = _FakeAgent()
+    agent.compression_enabled = True
+    setattr(agent, "context_compressor", ContextCompressor(
+        model=agent.model,
+        config_context_length=272_000,
+        threshold_percent=0.85,
+        protect_first_n=1,
+        protect_last_n=1,
+        quiet_mode=True,
+    ))
+    history = [
+        {"role": "user", "content": "x" * (960_000 if large_prompt else 4_000)},
+        {
+            "role": "assistant",
+            "content": "Working on it.",
+            "codex_reasoning_items": [{
+                "type": "reasoning",
+                "encrypted_content": "A" * 1_000_000,
+                "summary": [],
+            }],
+        },
+        {"role": "user", "content": "Any progress?"},
+        {"role": "assistant", "content": "Still working."},
+    ]
+    compress_calls = []
+
+    def _compress(messages, _system_message, **_kwargs):
+        compress_calls.append(messages)
+        return messages[-1:], "SYSTEM"
+
+    setattr(agent, "_compress_context", _compress)
+    ctx = _build(agent, conversation_history=history)
+
+    assert len(compress_calls) == int(large_prompt)
+    if not large_prompt:
+        assert ctx.messages[:-1] == history
+        assert len(history[1]["codex_reasoning_items"][0]["encrypted_content"]) == 1_000_000
+
+
 def test_preflight_waits_for_real_usage_before_second_compression(monkeypatch):
     """A still-high rough estimate must not trigger an immediate second pass.
 

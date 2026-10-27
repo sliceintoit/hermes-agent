@@ -10,8 +10,11 @@ Coverage levels:
   Persistent cache       — save/load, corruption, update, provider isolation
 """
 
+import copy
+import json
 import time
 
+import pytest
 import yaml
 from unittest.mock import patch, MagicMock
 
@@ -22,6 +25,7 @@ from agent.model_metadata import (
     _strip_provider_prefix,
     estimate_tokens_rough,
     estimate_messages_tokens_rough,
+    estimate_request_tokens_rough,
     get_model_context_length,
     get_next_probe_tier,
     get_cached_context_length,
@@ -107,6 +111,64 @@ class TestEstimateMessagesTokensRough:
         # a small band so this isn't a change-detector for the exact
         # string representation.
         assert 1500 <= result < 2000
+
+    def test_codex_ciphertext_size_does_not_inflate_estimate(self):
+        msg = {
+            "role": "assistant",
+            "content": "Working on it.",
+            "codex_reasoning_items": [{
+                "type": "reasoning",
+                "id": "rs_test",
+                "encrypted_content": "short",
+                "summary": [{"type": "summary_text", "text": "Checking the result."}],
+            }],
+        }
+        larger = copy.deepcopy(msg)
+        larger["codex_reasoning_items"][0]["encrypted_content"] = "A" * 1_000_000
+
+        assert estimate_messages_tokens_rough([larger]) == estimate_messages_tokens_rough([msg])
+        request_kwargs = {
+            "system_prompt": "Keep the original request unchanged.",
+            "tools": [{"type": "function", "function": {"name": "check", "parameters": {}}}],
+        }
+        assert estimate_request_tokens_rough([larger], **request_kwargs) == (
+            estimate_request_tokens_rough([msg], **request_kwargs)
+        )
+
+    def test_codex_estimation_preserves_replay_payload(self):
+        msg = {
+            "role": "assistant",
+            "content": "Working on it.",
+            "codex_reasoning_items": [{
+                "type": "reasoning", "encrypted_content": "opaque-replay-data", "summary": [],
+            }, None],
+        }
+        original_wire = json.dumps(msg)
+        original_items = msg["codex_reasoning_items"]
+        original_item = original_items[0]
+
+        estimate_request_tokens_rough([msg])
+
+        assert json.dumps(msg) == original_wire
+        assert msg["codex_reasoning_items"] is original_items
+        assert original_items[0] is original_item
+
+    def test_codex_summary_text_still_contributes_tokens(self):
+        msg = {
+            "role": "assistant",
+            "content": "Working on it.",
+            "codex_reasoning_items": [{
+                "type": "reasoning", "encrypted_content": "opaque-replay-data", "summary": [],
+            }],
+        }
+        with_summary = copy.deepcopy(msg)
+        with_summary["codex_reasoning_items"][0]["summary"] = [
+            {"type": "summary_text", "text": "x" * 4_000},
+        ]
+
+        assert estimate_messages_tokens_rough([with_summary]) >= (
+            estimate_messages_tokens_rough([msg]) + 1_000
+        )
 
     def test_message_with_huge_base64_image_stays_bounded(self):
         """A 1MB base64 PNG must not explode to ~250K tokens."""
@@ -424,75 +486,66 @@ class TestCodexOAuthContextLength:
             "leaked outside openai-codex provider"
         )
 
-    def test_stale_codex_cache_over_400k_is_invalidated(self, tmp_path, monkeypatch):
-        """Pre-PR #14935 builds cached gpt-5.5 at 1.05M (from models.dev)
-        before the Codex-aware branch existed. Upgrading users keep that
-        stale entry on disk and the cache-first lookup returns it forever.
-        Codex OAuth caps at 272k for every slug, so any cached Codex
-        entry >= 400k must be dropped and re-resolved via the live probe.
-        """
+    @pytest.mark.parametrize("provider", ["openai-codex", "codex", "", "custom", "openai", "auto", "openrouter"])
+    @pytest.mark.parametrize("cached_ctx,live_ctx", [
+        (1_050_000, 272_000),
+        (272_000, 500_000),
+        (372_000, 272_000),
+    ])
+    def test_codex_cache_revalidated_against_live_metadata(
+        self, tmp_path, monkeypatch, provider, cached_ctx, live_ctx
+    ):
+        """Any plausible cached value can go stale, in either direction."""
         from agent import model_metadata as mm
 
-        # Isolate the cache file to tmp_path
         cache_file = tmp_path / "context_length_cache.yaml"
         monkeypatch.setattr(mm, "_get_context_cache_path", lambda: cache_file)
-
         base_url = "https://chatgpt.com/backend-api/codex/"
-        stale_key = f"gpt-5.5@{base_url}"
+        model = "gpt-6.1-sol"
+        cache_key = f"{model}@{base_url}"
         other_key = "other-model@https://api.openai.com/v1/"
-        import yaml as _yaml
-        cache_file.write_text(_yaml.dump({"context_lengths": {
-            stale_key: 1_050_000,   # stale pre-fix value
-            other_key: 128_000,     # unrelated, must survive
+        cache_file.write_text(yaml.safe_dump({"context_lengths": {
+            cache_key: cached_ctx,
+            other_key: 128_000,
         }}))
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"models": [{
+            "slug": model,
+            "context_window": live_ctx,
+            "max_context_window": 872_000,
+        }]}
 
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-        fake_response.json.return_value = {
-            "models": [{"slug": "gpt-5.5", "context_window": 272_000}]
-        }
+        with patch.object(mm.requests, "get", return_value=response) as get:
+            for _ in range(2):
+                assert mm.get_model_context_length(
+                    model, base_url=base_url, api_key="fake-token", provider=provider,
+                ) == live_ctx
+        # Revalidate disk snapshots without making a network request per call.
+        assert get.call_count == 1
+        persisted = yaml.safe_load(cache_file.read_text())["context_lengths"]
+        assert persisted[cache_key] == live_ctx
+        assert persisted[other_key] == 128_000
 
-        with patch("agent.model_metadata.requests.get", return_value=fake_response), \
-             patch("agent.model_metadata.save_context_length") as mock_save:
-            ctx = mm.get_model_context_length(
-                model="gpt-5.5",
-                base_url=base_url,
-                api_key="fake-token",
-                provider="openai-codex",
-            )
-
-        assert ctx == 272_000, f"Stale entry should have been re-resolved to 272k, got {ctx}"
-        # Live save was called with the fresh value
-        mock_save.assert_called_with("gpt-5.5", base_url, 272_000)
-        # The stale entry was removed from disk; unrelated entries survived
-        remaining = _yaml.safe_load(cache_file.read_text()).get("context_lengths", {})
-        assert stale_key not in remaining, "Stale entry was not invalidated from the cache file"
-        assert remaining.get(other_key) == 128_000, "Unrelated cache entries must not be touched"
-
-    def test_fresh_codex_cache_under_400k_is_respected(self, tmp_path, monkeypatch):
-        """Codex entries at the correct 272k must NOT be invalidated —
-        only stale pre-fix values (>= 400k) get dropped."""
+    @pytest.mark.parametrize("model,expected", [
+        ("gpt-6.1-sol", 500_000),
+        ("gpt-6.1-terra", 500_000),
+        ("future-codex-model", DEFAULT_FALLBACK_CONTEXT),
+    ])
+    def test_codex_outage_does_not_leak_direct_api_context(self, model, expected):
+        """An unavailable Codex probe must not borrow direct-API catalog limits."""
         from agent import model_metadata as mm
 
-        cache_file = tmp_path / "context_length_cache.yaml"
-        monkeypatch.setattr(mm, "_get_context_cache_path", lambda: cache_file)
-
-        base_url = "https://chatgpt.com/backend-api/codex/"
-        import yaml as _yaml
-        cache_file.write_text(_yaml.dump({"context_lengths": {
-            f"gpt-5.5@{base_url}": 272_000,
-        }}))
-
-        # If the invalidation incorrectly fired, this would be called; assert it isn't.
-        with patch("agent.model_metadata.requests.get") as mock_get:
-            ctx = mm.get_model_context_length(
-                model="gpt-5.5",
-                base_url=base_url,
-                api_key="fake-token",
-                provider="openai-codex",
-            )
-        assert ctx == 272_000
-        mock_get.assert_not_called()
+        with (
+            patch.object(mm, "get_cached_context_length", return_value=None),
+            patch.object(mm.requests, "get", return_value=MagicMock(status_code=401)),
+            patch.object(mm, "save_context_length"),
+            patch.object(mm, "_query_ollama_api_show", return_value=None),
+            patch("agent.models_dev.lookup_models_dev_context", return_value=1_050_000),
+        ):
+            assert mm.get_model_context_length(
+                model, base_url="https://chatgpt.com/backend-api/codex",
+                api_key="expired-token", provider="openai-codex",
+            ) == expected
 
     def test_stale_invalidation_scoped_to_codex_provider(self, tmp_path, monkeypatch):
         """A cached 1M entry for a non-Codex provider (e.g. Anthropic opus on

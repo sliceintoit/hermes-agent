@@ -964,6 +964,29 @@ class TestExplicitProviderRouting:
 class TestGetTextAuxiliaryClient:
     """Test the full resolution chain for get_text_auxiliary_client."""
 
+    @pytest.mark.parametrize("aux_model", [None, "explicit-aux-model"])
+    def test_auto_follows_session_model_unless_explicitly_overridden(self, aux_model):
+        """A saved default must not replace a model chosen in this session."""
+        runtime = {
+            "provider": "openai-codex",
+            "model": "session-selected-model",
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "api_mode": "codex_responses",
+        }
+        client = MagicMock()
+        with (
+            patch("agent.auxiliary_client._get_auxiliary_task_config", return_value={
+                "provider": "auto", "model": aux_model or "",
+            }),
+            patch("agent.auxiliary_client._read_main_model", return_value="saved-default-model"),
+            patch("agent.auxiliary_client._get_aux_model_for_provider", return_value=""),
+            patch("agent.auxiliary_client._build_codex_client", return_value=(client, runtime["model"])),
+        ):
+            resolved_client, model = get_text_auxiliary_client("compression", main_runtime=runtime)
+
+        assert resolved_client is client
+        assert model == (aux_model or runtime["model"])
+
     def test_codex_pool_entry_takes_priority_over_auth_store(self):
         class _Entry:
             access_token = "pooled-codex-token"
