@@ -35,9 +35,10 @@ from tui_gateway import server
 _log = logging.getLogger(__name__)
 
 # Max seconds a pool-dispatched handler will block waiting for the event loop
-# to flush a WS frame before we mark the transport dead. Protects handler
-# threads from a wedged socket.
+# to flush a WS frame before giving up the worker wait, not the connection.
+# The independent send deadline below handles genuinely stalled sockets.
 _WS_WRITE_TIMEOUT_S = 10.0
+_WS_SEND_DEADLINE_S = 30.0
 _WS_LOG_PAYLOAD_PREVIEW = 240
 
 # Keep starlette optional at import time; handle_ws uses the real class when
@@ -75,6 +76,7 @@ class WSTransport:
         self._loop = loop
         self._peer = peer
         self._closed = False
+        self._send_lock = asyncio.Lock()
 
     def write(self, obj: dict) -> bool:
         if self._closed:
@@ -109,7 +111,7 @@ class WSTransport:
             # the worker thread and keep the transport alive; _safe_send latches
             # on a real socket error when the frame actually fails.
             _log.warning(
-                "ws write slow (loop stalled >%ss) peer=%s — frame left in flight",
+                "ws write pending >%ss peer=%s — loop delay or socket backpressure; frame left in flight",
                 _WS_WRITE_TIMEOUT_S, self._peer,
             )
             return not self._closed
@@ -129,14 +131,35 @@ class WSTransport:
         return not self._closed
 
     async def _safe_send(self, line: str) -> None:
+        # Serialize whole frames, including replies and worker-thread events.
+        # The deadline belongs to the actual socket operation, not the worker's
+        # wait for the event loop to schedule it (upstream #106581).
+        async with self._send_lock:
+            if self._closed:
+                return
+            try:
+                await asyncio.wait_for(
+                    self._ws.send_text(line), timeout=_WS_SEND_DEADLINE_S
+                )
+            except asyncio.TimeoutError:
+                self._closed = True
+                _log.warning(
+                    "ws send deadline exceeded peer=%s deadline=%ss — closing stalled socket",
+                    self._peer, _WS_SEND_DEADLINE_S,
+                )
+                self._loop.create_task(self._close_stalled_socket())
+            except Exception as exc:
+                self._closed = True
+                _log.warning(
+                    "ws send failed peer=%s error_type=%s error=%s",
+                    self._peer, type(exc).__name__, exc,
+                )
+
+    async def _close_stalled_socket(self) -> None:
         try:
-            await self._ws.send_text(line)
+            await asyncio.wait_for(self._ws.close(code=1011), timeout=5.0)
         except Exception as exc:
-            self._closed = True
-            _log.warning(
-                "ws send failed peer=%s error_type=%s error=%s",
-                self._peer, type(exc).__name__, exc,
-            )
+            _log.debug("ws stalled socket close failed peer=%s error=%s", self._peer, exc)
 
     def close(self) -> None:
         self._closed = True

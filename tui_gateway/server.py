@@ -503,6 +503,21 @@ def _ws_session_is_orphaned(session: dict | None) -> bool:
         return False
     if session.get("running"):
         return False
+    # A detached idle orchestrator can still own a worker that will wake it.
+    # Reaping that orchestrator closes its agent and can kill the worker.
+    key = str(session.get("session_key") or "")
+    if key:
+        from tools.process_registry import process_registry
+
+        for entry in process_registry.list_sessions():
+            proc = process_registry.get(entry["session_id"])
+            if (
+                proc is not None
+                and proc.session_key == key
+                and not proc.exited
+                and (proc.notify_on_complete or proc.watch_patterns)
+            ):
+                return False
     return session.get("transport") is _detached_ws_transport
 
 
