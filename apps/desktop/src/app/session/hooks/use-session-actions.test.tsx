@@ -61,10 +61,14 @@ function storedSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
 
 function Harness({
   onReady,
-  requestGateway
+  requestGateway,
+  storedSessionId = null,
+  routeToken = 'token'
 }: {
   onReady: (create: (preview?: string | null) => Promise<string | null>) => void
   requestGateway: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+  storedSessionId?: string | null
+  routeToken?: string
 }) {
   const ref = <T,>(value: T): MutableRefObject<T> => ({ current: value })
 
@@ -74,12 +78,12 @@ function Harness({
     busyRef: ref(false),
     creatingSessionRef: ref(false),
     ensureSessionState: () => ({}) as ClientSessionState,
-    getRouteToken: () => 'token',
+    getRouteToken: () => routeToken,
     navigate: vi.fn() as never,
     requestGateway,
     runtimeIdByStoredSessionIdRef: ref(new Map<string, string>()),
     selectedStoredSessionId: null,
-    selectedStoredSessionIdRef: ref<string | null>(null),
+    selectedStoredSessionIdRef: ref<string | null>(storedSessionId),
     sessionStateByRuntimeIdRef: ref(new Map<string, ClientSessionState>()),
     syncSessionStateToView: vi.fn(),
     updateSessionState: () => ({}) as ClientSessionState
@@ -120,6 +124,18 @@ async function createWith(
 }
 
 describe('createBackendSessionForSend profile routing', () => {
+  it.each([
+    { storedSessionId: 'existing', routeToken: '/::' },
+    { storedSessionId: null, routeToken: '/existing::' }
+  ])('refuses replacement creation during recovery: %j', async props => {
+    const requestGateway = vi.fn(async () => ({} as never))
+    let create: ((preview?: string | null) => Promise<string | null>) | null = null
+    render(<Harness {...props} onReady={c => (create = c)} requestGateway={requestGateway} />)
+    await waitFor(() => expect(create).not.toBeNull())
+    await expect(create!()).rejects.toThrow('no new session was created')
+    expect(requestGateway).not.toHaveBeenCalled()
+  })
+
   afterEach(() => {
     cleanup()
     $newChatProfile.set(null)

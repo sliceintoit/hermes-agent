@@ -58,7 +58,7 @@ import { reportBackendContract } from '@/store/updates'
 import { isWatchWindow } from '@/store/windows'
 import type { SessionCreateResponse, SessionInfo, SessionResumeResponse, SessionRuntimeInfo, UsageStats } from '@/types/hermes'
 
-import { NEW_CHAT_ROUTE, sessionRoute, SETTINGS_ROUTE } from '../../routes'
+import { NEW_CHAT_ROUTE, routeSessionId, sessionRoute, SETTINGS_ROUTE } from '../../routes'
 import type { ClientSessionState, SidebarNavItem } from '../../types'
 
 interface SessionActionsOptions {
@@ -460,6 +460,11 @@ export function useSessionActions({
       const startingActiveSessionId = activeSessionIdRef.current
       const startingStoredSessionId = selectedStoredSessionIdRef.current
       const startingRouteToken = getRouteToken()
+
+      // A missing runtime during reconnect is not permission to start over.
+      if (startingStoredSessionId || routeSessionId(startingRouteToken.split(':')[0])) {
+        throw new Error('Conversation is reconnecting. Reopen this conversation and retry; no new session was created.')
+      }
 
       creatingSessionRef.current = true
 
