@@ -6988,13 +6988,18 @@ _CRON_PROFILE_LOCK = threading.RLock()
 
 
 def _cron_profile_dicts() -> List[Dict[str, Any]]:
-    """Return dashboard profile records, falling back to a directory scan."""
+    """Cron only needs profile names, not config, gateway or skill metadata."""
     from hermes_cli import profiles as profiles_mod
-    try:
-        return [_profile_to_dict(p) for p in profiles_mod.list_profiles()]
-    except Exception:
-        _log.exception("Failed to list profiles for cron dashboard; falling back to directory scan")
-        return _fallback_profile_dicts(profiles_mod)
+
+    profiles = []
+    if profiles_mod._get_default_hermes_home().is_dir():
+        profiles.append({"name": "default"})
+    root = profiles_mod._get_profiles_root()
+    if root.is_dir():
+        for entry in sorted(root.iterdir()):
+            if entry.name != "default" and profiles_mod._PROFILE_ID_RE.match(entry.name) and entry.is_dir():
+                profiles.append({"name": entry.name})
+    return profiles
 
 
 def _cron_profile_home(profile: Optional[str]) -> Tuple[str, Path]:
@@ -7064,8 +7069,11 @@ def _find_cron_job_profile(job_id: str) -> Optional[str]:
     return None
 
 
+# These handlers do blocking filesystem/SQLite I/O and share _CRON_PROFILE_LOCK.
+# Keep them synchronous so FastAPI runs them in its worker pool, not the chat
+# event loop (including when another cron request is holding the lock).
 @app.get("/api/cron/jobs")
-async def list_cron_jobs(profile: str = "all"):
+def list_cron_jobs(profile: str = "all"):
     requested = (profile or "all").strip()
     if requested.lower() != "all":
         return _call_cron_for_profile(requested, "list_jobs", True)
@@ -7083,7 +7091,7 @@ async def list_cron_jobs(profile: str = "all"):
 
 
 @app.get("/api/cron/jobs/{job_id}")
-async def get_cron_job(job_id: str, profile: Optional[str] = None):
+def get_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -7094,7 +7102,7 @@ async def get_cron_job(job_id: str, profile: Optional[str] = None):
 
 
 @app.get("/api/cron/jobs/{job_id}/runs")
-async def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: int = 20):
+def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: int = 20):
     """Run sessions produced by a cron job, newest first.
 
     Cron runs are stored as ordinary sessions whose id is
@@ -7140,7 +7148,7 @@ async def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: 
 
 
 @app.post("/api/cron/jobs")
-async def create_cron_job(body: CronJobCreate, profile: str = "default"):
+def create_cron_job(body: CronJobCreate, profile: str = "default"):
     try:
         return _call_cron_for_profile(
             profile,
@@ -7185,7 +7193,7 @@ async def get_cron_delivery_targets():
 
 
 @app.put("/api/cron/jobs/{job_id}")
-async def update_cron_job(job_id: str, body: CronJobUpdate, profile: Optional[str] = None):
+def update_cron_job(job_id: str, body: CronJobUpdate, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -7199,7 +7207,7 @@ async def update_cron_job(job_id: str, body: CronJobUpdate, profile: Optional[st
 
 
 @app.post("/api/cron/jobs/{job_id}/pause")
-async def pause_cron_job(job_id: str, profile: Optional[str] = None):
+def pause_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -7210,7 +7218,7 @@ async def pause_cron_job(job_id: str, profile: Optional[str] = None):
 
 
 @app.post("/api/cron/jobs/{job_id}/resume")
-async def resume_cron_job(job_id: str, profile: Optional[str] = None):
+def resume_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -7221,7 +7229,7 @@ async def resume_cron_job(job_id: str, profile: Optional[str] = None):
 
 
 @app.post("/api/cron/jobs/{job_id}/trigger")
-async def trigger_cron_job(job_id: str, profile: Optional[str] = None):
+def trigger_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -7232,7 +7240,7 @@ async def trigger_cron_job(job_id: str, profile: Optional[str] = None):
 
 
 @app.delete("/api/cron/jobs/{job_id}")
-async def delete_cron_job(job_id: str, profile: Optional[str] = None):
+def delete_cron_job(job_id: str, profile: Optional[str] = None):
     selected = profile or _find_cron_job_profile(job_id)
     if not selected:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -7290,7 +7298,7 @@ async def list_cron_blueprints():
 
 
 @app.post("/api/cron/blueprints/instantiate")
-async def instantiate_blueprint(body: AutomationBlueprintInstantiate, profile: str = "default"):
+def instantiate_blueprint(body: AutomationBlueprintInstantiate, profile: str = "default"):
     """Fill a blueprint's slots and create the cron job (form-submit path)."""
     try:
         from cron.blueprint_catalog import fill_blueprint, get_blueprint, BlueprintFillError
